@@ -6,12 +6,18 @@ export const awsConfig = {
     clientId: '6j57c6dts56j4gn0ctpokgob63',
   },
   s3: {
-    groundtruthBucket: process.env.NEXT_PUBLIC_ENV === 'prod'
-      ? 'solar-groundtruth-prod'
-      : 'solar-groundtruth-dev',
-    orthosBucket: process.env.NEXT_PUBLIC_ENV === 'prod'
-      ? 'solar-orthos-prod'
-      : 'solar-orthos-dev',
+    // Default buckets (for backward compatibility)
+    groundtruthBucket: 'solar-groundtruth-dev',
+    orthosBucket: 'solar-orthos-dev',
+    // All environment buckets for admin dashboard
+    dev: {
+      groundtruthBucket: 'solar-groundtruth-dev',
+      orthosBucket: 'solar-orthos-dev',
+    },
+    prod: {
+      groundtruthBucket: 'solar-groundtruth-prod',
+      orthosBucket: 'solar-orthos-prod',
+    },
   },
   dynamodb: {
     projectsTable: process.env.NEXT_PUBLIC_ENV === 'prod'

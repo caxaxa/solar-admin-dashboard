@@ -7,10 +7,16 @@ import { FolderOpen, ChevronRight, Loader2 } from 'lucide-react';
 interface Project {
   orgId: string;
   projectId: string;
+  environment: 'dev' | 'prod';
+}
+
+interface OrgInfo {
+  email: string;
 }
 
 export function ProjectsList() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [organizations, setOrganizations] = useState<Record<string, OrgInfo>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,6 +27,7 @@ export function ProjectsList() {
         if (!response.ok) throw new Error('Failed to fetch projects');
         const data = await response.json();
         setProjects(data.projects);
+        setOrganizations(data.organizations || {});
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load projects');
       } finally {
@@ -60,13 +67,18 @@ export function ProjectsList() {
     );
   }
 
-  // Group projects by organization
-  const projectsByOrg: Record<string, string[]> = {};
-  projects.forEach(({ orgId, projectId }) => {
-    if (!projectsByOrg[orgId]) {
-      projectsByOrg[orgId] = [];
+  // Group projects by environment then organization
+  const projectsByEnvAndOrg: Record<string, Record<string, Project[]>> = {
+    prod: {},
+    dev: {},
+  };
+
+  projects.forEach((project) => {
+    const { orgId, environment } = project;
+    if (!projectsByEnvAndOrg[environment][orgId]) {
+      projectsByEnvAndOrg[environment][orgId] = [];
     }
-    projectsByOrg[orgId].push(projectId);
+    projectsByEnvAndOrg[environment][orgId].push(project);
   });
 
   return (
@@ -77,35 +89,104 @@ export function ProjectsList() {
         </h3>
       </div>
 
+      {/* Production Projects */}
       <div className="space-y-4">
-        {Object.entries(projectsByOrg).map(([orgId, orgProjects]) => (
-          <div key={orgId} className="bg-white rounded-lg shadow">
-            <div className="px-4 py-3 bg-gray-50 border-b rounded-t-lg">
-              <h4 className="font-medium text-gray-700">
-                Organization: {orgId.substring(0, 8)}...
-              </h4>
-              <p className="text-sm text-gray-500">
-                {orgProjects.length} project(s)
-              </p>
-            </div>
+        <h4 className="text-md font-semibold text-gray-800 flex items-center gap-2">
+          <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-bold">
+            PRODUCTION
+          </span>
+          <span className="text-gray-500 text-sm">
+            ({Object.values(projectsByEnvAndOrg.prod).flat().length} projects)
+          </span>
+        </h4>
 
-            <div className="divide-y">
-              {orgProjects.map((projectId) => (
-                <Link
-                  key={projectId}
-                  href={`/projects/${orgId}/${projectId}`}
-                  className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 transition-colors group"
-                >
-                  <div className="flex items-center gap-3">
-                    <FolderOpen className="h-5 w-5 text-blue-500" />
-                    <span className="font-mono text-sm">{projectId}</span>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600" />
-                </Link>
-              ))}
-            </div>
+        {Object.entries(projectsByEnvAndOrg.prod).length === 0 ? (
+          <div className="bg-gray-50 rounded-lg p-4 text-gray-500 text-sm">
+            No production projects found
           </div>
-        ))}
+        ) : (
+          Object.entries(projectsByEnvAndOrg.prod).map(([orgId, orgProjects]) => (
+            <div key={`prod-${orgId}`} className="bg-white rounded-lg shadow border-l-4 border-green-500">
+              <div className="px-4 py-3 bg-gray-50 border-b rounded-t-lg">
+                <h4 className="font-medium text-gray-700">
+                  {organizations[orgId]?.email || orgId}{' '}
+                  <span className="text-gray-400 text-sm">
+                    ({orgId.substring(0, 8)}...)
+                  </span>
+                </h4>
+                <p className="text-sm text-gray-500">
+                  {orgProjects.length} project(s)
+                </p>
+              </div>
+
+              <div className="divide-y">
+                {orgProjects.map((project) => (
+                  <Link
+                    key={project.projectId}
+                    href={`/projects/${project.orgId}/${project.projectId}?env=prod`}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <FolderOpen className="h-5 w-5 text-green-500" />
+                      <span className="font-mono text-sm">{project.projectId}</span>
+                    </div>
+                    <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600" />
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Development Projects */}
+      <div className="space-y-4">
+        <h4 className="text-md font-semibold text-gray-800 flex items-center gap-2">
+          <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs font-bold">
+            DEVELOPMENT
+          </span>
+          <span className="text-gray-500 text-sm">
+            ({Object.values(projectsByEnvAndOrg.dev).flat().length} projects)
+          </span>
+        </h4>
+
+        {Object.entries(projectsByEnvAndOrg.dev).length === 0 ? (
+          <div className="bg-gray-50 rounded-lg p-4 text-gray-500 text-sm">
+            No development projects found
+          </div>
+        ) : (
+          Object.entries(projectsByEnvAndOrg.dev).map(([orgId, orgProjects]) => (
+            <div key={`dev-${orgId}`} className="bg-white rounded-lg shadow border-l-4 border-yellow-500">
+              <div className="px-4 py-3 bg-gray-50 border-b rounded-t-lg">
+                <h4 className="font-medium text-gray-700">
+                  {organizations[orgId]?.email || orgId}{' '}
+                  <span className="text-gray-400 text-sm">
+                    ({orgId.substring(0, 8)}...)
+                  </span>
+                </h4>
+                <p className="text-sm text-gray-500">
+                  {orgProjects.length} project(s)
+                </p>
+              </div>
+
+              <div className="divide-y">
+                {orgProjects.map((project) => (
+                  <Link
+                    key={project.projectId}
+                    href={`/projects/${project.orgId}/${project.projectId}?env=dev`}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <FolderOpen className="h-5 w-5 text-yellow-500" />
+                      <span className="font-mono text-sm">{project.projectId}</span>
+                    </div>
+                    <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600" />
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

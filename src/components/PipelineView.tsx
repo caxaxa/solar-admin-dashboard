@@ -20,6 +20,7 @@ import {
 interface PipelineViewProps {
   orgId: string;
   projectId: string;
+  env: string;
 }
 
 interface ProjectStatus {
@@ -30,7 +31,7 @@ interface ProjectStatus {
   hasReport: boolean;
 }
 
-export function PipelineView({ orgId, projectId }: PipelineViewProps) {
+export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
   const [status, setStatus] = useState<ProjectStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function PipelineView({ orgId, projectId }: PipelineViewProps) {
     async function fetchStatus() {
       try {
         const response = await fetch(
-          `/api/projects/${orgId}/${projectId}/status`
+          `/api/projects/${orgId}/${projectId}/status?env=${env}`
         );
         if (!response.ok) throw new Error('Failed to fetch status');
         const data = await response.json();
@@ -52,7 +53,7 @@ export function PipelineView({ orgId, projectId }: PipelineViewProps) {
     }
 
     fetchStatus();
-  }, [orgId, projectId]);
+  }, [orgId, projectId, env]);
 
   const stages = [
     {
@@ -76,7 +77,7 @@ export function PipelineView({ orgId, projectId }: PipelineViewProps) {
       description: 'Define region of interest',
       complete: status?.hasCropAnnotation || false,
       actionLabel: 'Edit Crop',
-      actionHref: `/projects/${orgId}/${projectId}/annotate/crop`,
+      actionHref: `/projects/${orgId}/${projectId}/annotate/crop?env=${env}`,
     },
     {
       id: 'inference',
@@ -94,7 +95,7 @@ export function PipelineView({ orgId, projectId }: PipelineViewProps) {
       description: 'Verify and correct detections',
       complete: status?.hasDefectLabels || false,
       actionLabel: 'Review Detections',
-      actionHref: `/projects/${orgId}/${projectId}/annotate/defects`,
+      actionHref: `/projects/${orgId}/${projectId}/annotate/defects?env=${env}`,
     },
     {
       id: 'report',
@@ -119,20 +120,47 @@ export function PipelineView({ orgId, projectId }: PipelineViewProps) {
   const handleAction = async (actionType: string) => {
     setActionLoading(actionType);
     try {
-      const response = await fetch(
-        `/api/projects/${orgId}/${projectId}/actions/${actionType}`,
-        { method: 'POST' }
-      );
-      if (!response.ok) throw new Error('Action failed');
+      // Handle run-inference action with the new endpoint
+      if (actionType === 'run-inference') {
+        const response = await fetch(
+          `/api/projects/${orgId}/${projectId}/run-inference?env=${env}`,
+          { method: 'POST' }
+        );
+        if (!response.ok) throw new Error('Failed to submit inference job');
+        const data = await response.json();
+        console.log('Inference job submitted:', data.jobId);
+        alert(`Inference job submitted successfully!\nJob ID: ${data.jobId}`);
+      } else {
+        // Generic action handler for other action types
+        const response = await fetch(
+          `/api/projects/${orgId}/${projectId}/actions/${actionType}?env=${env}`,
+          { method: 'POST' }
+        );
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || errorData.message || 'Action failed');
+        }
+        const data = await response.json();
+
+        // Show success message with job ID if available
+        if (data.jobId) {
+          console.log(`${actionType} job submitted:`, data.jobId);
+          alert(`Job submitted successfully!\nAction: ${actionType}\nJob ID: ${data.jobId}`);
+        } else if (data.success) {
+          alert(`${actionType} completed successfully!`);
+        }
+      }
+
       // Refresh status
       const statusResponse = await fetch(
-        `/api/projects/${orgId}/${projectId}/status`
+        `/api/projects/${orgId}/${projectId}/status?env=${env}`
       );
       if (statusResponse.ok) {
         setStatus(await statusResponse.json());
       }
     } catch (err) {
       console.error('Action failed:', err);
+      alert(`Action failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setActionLoading(null);
     }
