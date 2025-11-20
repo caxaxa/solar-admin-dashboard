@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FolderOpen, ChevronRight, Loader2 } from 'lucide-react';
+import { buildApiUrl } from '@/lib/api-client';
 
 interface Project {
   orgId: string;
@@ -23,7 +24,7 @@ export function ProjectsList() {
   useEffect(() => {
     async function fetchProjects() {
       try {
-        const response = await fetch('/api/projects');
+        const response = await fetch(buildApiUrl('/projects'));
         if (!response.ok) throw new Error('Failed to fetch projects');
         const data = await response.json();
         setProjects(data.projects);
@@ -123,7 +124,7 @@ export function ProjectsList() {
                 {orgProjects.map((project) => (
                   <Link
                     key={project.projectId}
-                    href={`/projects/${project.orgId}/${project.projectId}?env=prod`}
+                    href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=prod`}
                     className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 transition-colors group"
                   >
                     <div className="flex items-center gap-3">
@@ -173,7 +174,7 @@ export function ProjectsList() {
                 {orgProjects.map((project) => (
                   <Link
                     key={project.projectId}
-                    href={`/projects/${project.orgId}/${project.projectId}?env=dev`}
+                    href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=dev`}
                     className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 transition-colors group"
                   >
                     <div className="flex items-center gap-3">

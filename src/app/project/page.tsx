@@ -1,22 +1,29 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { use } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { Header } from '@/components/Header';
 import { PipelineView } from '@/components/PipelineView';
+import Link from 'next/link';
 
-interface ProjectPageProps {
-  params: Promise<{
-    orgId: string;
-    projectId: string;
-  }>;
-}
-
-export default function ProjectPage({ params }: ProjectPageProps) {
-  const { orgId, projectId } = use(params);
+export default function ProjectPage() {
   const searchParams = useSearchParams();
+  const orgId = searchParams.get('orgId');
+  const projectId = searchParams.get('projectId');
   const env = searchParams.get('env') || 'dev';
+
+  if (!orgId || !projectId) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="bg-white shadow rounded-lg p-10 text-center space-y-4">
+          <p className="text-gray-700">Missing project context.</p>
+          <Link href="/projects" className="text-blue-600 hover:underline">
+            Back to project list
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-gray-50">

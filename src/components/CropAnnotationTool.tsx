@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Canvas, FabricImage, Polygon, Line, Circle, Point as FabricPoint } from 'fabric';
-import { Loader2, Save, RotateCcw, Trash2, MousePointer, Pentagon, Minus } from 'lucide-react';
+import { Loader2, Save, Trash2, MousePointer, Pentagon, Minus } from 'lucide-react';
+import { buildApiUrl } from '@/lib/api-client';
 
 interface Point {
   x: number;
@@ -67,7 +68,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
       try {
         console.log('Fetching crop annotations...');
         const response = await fetch(
-          `/api/projects/${orgId}/${projectId}/crop-annotations?env=${env}`
+          buildApiUrl(`/projects/${orgId}/${projectId}/crop-annotations?env=${env}`)
         );
 
         if (!response.ok) throw new Error('Failed to load annotations');
@@ -187,6 +188,9 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
         canvasInstanceRef.current = null;
       }
     };
+    // This effect intentionally depends only on the loading flag because it
+    // wires up Fabric.js event handlers once when the canvas mounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
   const loadImageFromStorage = async (canvas: Canvas) => {
@@ -454,7 +458,10 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
     }
   };
 
-  const handleMouseMove = (x: number, y: number) => {
+  // Reserved for potential hover previews in the future
+  // Reserved for potential hover previews in the future
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleMouseMove = (_x: number, _y: number) => {
     // Could add preview line while drawing
   };
 
@@ -518,7 +525,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
       };
 
       const response = await fetch(
-        `/api/projects/${orgId}/${projectId}/crop-annotations?env=${env}`,
+        buildApiUrl(`/projects/${orgId}/${projectId}/crop-annotations?env=${env}`),
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },

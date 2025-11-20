@@ -1,0 +1,274 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless API for Solar Admin Dashboard
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+        COGNITO_CLIENT_ID: !Ref CognitoClientId
+        GROUNDTRUTH_BUCKET_DEV: !Ref GroundtruthBucketDev
+        GROUNDTRUTH_BUCKET_PROD: !Ref GroundtruthBucketProd
+        ORTHOS_BUCKET_DEV: !Ref OrthosBucketDev
+        ORTHOS_BUCKET_PROD: !Ref OrthosBucketProd
+        REPORTS_BUCKET_DEV: !Ref ReportsBucketDev
+        REPORTS_BUCKET_PROD: !Ref ReportsBucketProd
+        PROJECTS_TABLE_DEV: !Ref ProjectsTableDev
+        PROJECTS_TABLE_PROD: !Ref ProjectsTableProd
+        JOB_QUEUE_DEV: !Ref JobQueueDev
+        JOB_QUEUE_PROD: !Ref JobQueueProd
+        INFERENCE_JOB_DEF_DEV: !Ref InferenceJobDefinitionDev
+        INFERENCE_JOB_DEF_PROD: !Ref InferenceJobDefinitionProd
+        REPORT_JOB_DEF_DEV: !Ref ReportJobDefinitionDev
+        REPORT_JOB_DEF_PROD: !Ref ReportJobDefinitionProd
+
+Parameters:
+  AwsRegion:
+    Type: String
+    Default: us-east-2
+  CognitoUserPoolId:
+    Type: String
+    Default: us-east-2_a98WW3Z3T
+  CognitoClientId:
+    Type: String
+    Default: 6j57c6dts56j4gn0ctpokgob63
+  GroundtruthBucketDev:
+    Type: String
+    Default: solar-groundtruth-dev
+  GroundtruthBucketProd:
+    Type: String
+    Default: solar-groundtruth-prod
+  OrthosBucketDev:
+    Type: String
+    Default: solar-orthos-dev
+  OrthosBucketProd:
+    Type: String
+    Default: solar-orthos-prod
+  ReportsBucketDev:
+    Type: String
+    Default: solar-reports-dev
+  ReportsBucketProd:
+    Type: String
+    Default: solar-reports-prod
+  ProjectsTableDev:
+    Type: String
+    Default: solar-projects-dev
+  ProjectsTableProd:
+    Type: String
+    Default: solar-projects-prod
+  JobQueueDev:
+    Type: String
+    Default: solar-job-queue-dev
+  JobQueueProd:
+    Type: String
+    Default: solar-job-queue-prod
+  InferenceJobDefinitionDev:
+    Type: String
+    Default: solar-inference-dev
+  InferenceJobDefinitionProd:
+    Type: String
+    Default: solar-inference-prod
+  ReportJobDefinitionDev:
+    Type: String
+    Default: solar-report-dev
+  ReportJobDefinitionProd:
+    Type: String
+    Default: solar-report-prod
+
+Resources:
+  AdminHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - https://d335vf81wvlg21.cloudfront.net
+          - https://admin.solar.aisol.cloud
+          - http://localhost:3000
+        AllowHeaders:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+
+  ProjectsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: projects/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${GroundtruthBucketDev}
+                - !Sub arn:aws:s3:::${GroundtruthBucketProd}
+                - !Sub arn:aws:s3:::${OrthosBucketDev}
+                - !Sub arn:aws:s3:::${OrthosBucketProd}
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${OrthosBucketDev}/*
+                - !Sub arn:aws:s3:::${OrthosBucketProd}/*
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+              Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects
+            Method: GET
+
+  AuthLoginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: auth-login/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:InitiateAuth
+                - cognito-idp:AdminListGroupsForUser
+                - cognito-idp:AdminGetUser
+                - cognito-idp:GetUser
+              Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /auth/login
+            Method: POST
+
+  CropAnnotationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: crop-annotations/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${GroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${GroundtruthBucketProd}/*
+                - !Sub arn:aws:s3:::${OrthosBucketDev}/*
+                - !Sub arn:aws:s3:::${OrthosBucketProd}/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/crop-annotations
+            Method: ANY
+
+  DefectAnnotationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: defect-annotations/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${GroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${GroundtruthBucketProd}/*
+                - !Sub arn:aws:s3:::${OrthosBucketDev}/*
+                - !Sub arn:aws:s3:::${OrthosBucketProd}/*
+                - !Sub arn:aws:s3:::${ReportsBucketDev}/*
+                - !Sub arn:aws:s3:::${ReportsBucketProd}/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/annotations
+            Method: ANY
+
+  ProjectStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: project-status/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${GroundtruthBucketDev}
+                - !Sub arn:aws:s3:::${GroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${GroundtruthBucketProd}
+                - !Sub arn:aws:s3:::${GroundtruthBucketProd}/*
+                - !Sub arn:aws:s3:::${OrthosBucketDev}
+                - !Sub arn:aws:s3:::${OrthosBucketDev}/*
+                - !Sub arn:aws:s3:::${OrthosBucketProd}
+                - !Sub arn:aws:s3:::${OrthosBucketProd}/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/status
+            Method: GET
+
+  RunInferenceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: run-inference/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - batch:SubmitJob
+              Resource: '*'
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/run-inference
+            Method: POST
+
+  ProjectActionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: project-actions/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - batch:SubmitJob
+              Resource: '*'
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/actions/{actionType}
+            Method: POST
+
+Outputs:
+  ApiEndpoint:
+    Description: HTTPS endpoint for the admin API
+    Value: !Sub https://${AdminHttpApi}.execute-api.${AwsRegion}.amazonaws.com

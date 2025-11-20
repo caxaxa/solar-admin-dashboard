@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { use, Suspense } from 'react';
+import { Suspense } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Loader2 } from 'lucide-react';
@@ -20,17 +20,24 @@ const CropAnnotationTool = dynamic(
   }
 );
 
-interface CropPageProps {
-  params: Promise<{
-    orgId: string;
-    projectId: string;
-  }>;
-}
-
-export default function CropAnnotationPage({ params }: CropPageProps) {
-  const { orgId, projectId } = use(params);
+export default function CropAnnotationPage() {
   const searchParams = useSearchParams();
+  const orgId = searchParams.get('orgId');
+  const projectId = searchParams.get('projectId');
   const env = searchParams.get('env') || 'dev';
+
+  if (!orgId || !projectId) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-6">
+        <div className="bg-gray-800 rounded-lg p-6 text-center space-y-4">
+          <p className="text-white">Missing project context.</p>
+          <Link href="/projects" className="text-blue-400 hover:underline">
+            Back to project list
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -38,7 +45,7 @@ export default function CropAnnotationPage({ params }: CropPageProps) {
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link
-            href={`/projects/${orgId}/${projectId}?env=${env}`}
+            href={`/project?orgId=${orgId}&projectId=${projectId}&env=${env}`}
             className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors"
           >
             <ArrowLeft className="h-5 w-5" />

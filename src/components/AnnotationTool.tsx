@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Canvas, Rect, Image as FabricImage, TPointerEventInfo, TPointerEvent, FabricObject } from 'fabric';
+import { Canvas, Rect, Image as FabricImage, TPointerEventInfo, TPointerEvent, FabricObject, Point } from 'fabric';
 import {
   Save,
   Loader2,
@@ -11,11 +11,15 @@ import {
   Square,
   Trash2,
   Tag,
+  Hand,
+  Pencil,
 } from 'lucide-react';
+import { buildApiUrl } from '@/lib/api-client';
 
 interface AnnotationToolProps {
   orgId: string;
   projectId: string;
+  env: string;
 }
 
 interface BoundingBox {
@@ -33,12 +37,15 @@ const LABELS = [
   { id: 'offlinepanels', name: 'Offline Panels', color: '#eab308' },
 ];
 
-// Extend FabricObject to include custom data property
-interface AnnotatedFabricObject extends FabricObject {
-  data?: { label: string };
+// Extend Rect to include custom label property
+interface AnnotatedRect extends Rect {
+  label?: string;
 }
 
-export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
+export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
+  console.log('AnnotationTool component loaded with:', { orgId, projectId, env });
+  const [mounted, setMounted] = useState(false);
+  const [canvasReady, setCanvasReady] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<Canvas | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,14 +55,26 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
   const [zoom, setZoom] = useState(1);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPanMode, setIsPanMode] = useState(false);
   const isDrawingRef = useRef(false);
+  const isPanningRef = useRef(false);
+  const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const startPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentRectRef = useRef<Rect | null>(null);
 
+  // Ensure component only renders on client
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Initialize Fabric.js canvas
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!mounted || !canvasRef.current || typeof window === 'undefined') {
+      console.log('Canvas initialization check:', { mounted, hasCanvasRef: !!canvasRef.current, hasWindow: typeof window !== 'undefined' });
+      return;
+    }
 
+    console.log('Initializing Fabric canvas...');
     const canvas = new Canvas(canvasRef.current, {
       width: window.innerWidth,
       height: window.innerHeight - 120,
@@ -64,6 +83,8 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
     });
 
     fabricCanvasRef.current = canvas;
+    console.log('Canvas initialized, setting canvasReady to true');
+    setCanvasReady(true);
 
     // Handle window resize
     const handleResize = () => {
@@ -80,24 +101,34 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
       window.removeEventListener('resize', handleResize);
       canvas.dispose();
     };
-  }, []);
+  }, [mounted]);
 
   // Load image and annotations
   useEffect(() => {
-    if (!fabricCanvasRef.current) return;
+    console.log('Load data useEffect triggered, canvasReady:', canvasReady, 'fabricCanvasRef.current:', !!fabricCanvasRef.current);
+    if (!canvasReady || !fabricCanvasRef.current) {
+      console.log('Canvas not ready yet, returning');
+      return;
+    }
 
     async function loadData() {
       try {
         // Get image URL and annotations from API
-        const response = await fetch(
-          `/api/projects/${orgId}/${projectId}/annotations`
-        );
+        const apiUrl = buildApiUrl(`/projects/${orgId}/${projectId}/annotations?env=${env}`);
+        console.log('Fetching annotations from:', apiUrl);
+
+        const response = await fetch(apiUrl);
+        console.log('Response status:', response.status);
+
         if (!response.ok) throw new Error('Failed to load data');
 
         const { imageUrl, annotations } = await response.json();
+        console.log('Received annotations:', annotations.length, 'Image URL:', imageUrl);
 
         // Load image
+        console.log('Loading image from:', imageUrl);
         const img = await FabricImage.fromURL(imageUrl, { crossOrigin: 'anonymous' });
+        console.log('Image loaded successfully, dimensions:', img.width, 'x', img.height);
 
         const canvas = fabricCanvasRef.current!;
 
@@ -106,6 +137,7 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
           (canvas.width! - 100) / img.width!,
           (canvas.height! - 100) / img.height!
         );
+        console.log('Image scale:', scale);
 
         img.set({
           left: 50,
@@ -122,6 +154,7 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
         // Load existing annotations
         if (annotations && annotations.length > 0) {
           const boxes = annotations[0]?.boundingBox?.boundingBoxes || [];
+          console.log('Loading', boxes.length, 'bounding boxes');
           boxes.forEach((box: BoundingBox) => {
             const labelConfig = LABELS.find((l) => l.id === box.label);
             const rect = new Rect({
@@ -131,20 +164,23 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
               height: box.height * scale,
               fill: 'transparent',
               stroke: labelConfig?.color || '#22c55e',
-              strokeWidth: 2,
+              strokeWidth: 0.25,
               cornerColor: labelConfig?.color || '#22c55e',
-              cornerSize: 8,
+              cornerSize: 2,
               transparentCorners: false,
-              data: { label: box.label },
-            });
+            }) as AnnotatedRect;
+            rect.label = box.label;
             canvas.add(rect);
           });
           setBoxCount(boxes.length);
+          console.log('Added', boxes.length, 'boxes to canvas');
         }
 
         setImageLoaded(true);
         canvas.renderAll();
+        console.log('Canvas rendered, loading complete');
       } catch (err) {
+        console.error('Error loading annotations:', err);
         setError(err instanceof Error ? err.message : 'Failed to load');
       } finally {
         setLoading(false);
@@ -152,9 +188,40 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
     }
 
     loadData();
-  }, [orgId, projectId]);
+  }, [canvasReady, orgId, projectId, env]);
 
-  // Drawing handlers
+  // Zoom handler
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !imageLoaded) return;
+
+    const handleWheel = (opt: any) => {
+      const evt = opt.e;
+      evt.preventDefault();
+      evt.stopPropagation();
+
+      const delta = evt.deltaY;
+      let newZoom = canvas.getZoom();
+      newZoom *= 0.999 ** delta;
+
+      // Limit zoom between 0.1x and 20x
+      if (newZoom > 20) newZoom = 20;
+      if (newZoom < 0.1) newZoom = 0.1;
+
+      canvas.zoomToPoint(new Point(evt.offsetX, evt.offsetY), newZoom);
+      setZoom(newZoom);
+      opt.e.preventDefault();
+      opt.e.stopPropagation();
+    };
+
+    canvas.on('mouse:wheel', handleWheel);
+
+    return () => {
+      canvas.off('mouse:wheel', handleWheel);
+    };
+  }, [imageLoaded]);
+
+  // Drawing and panning handlers
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !imageLoaded) return;
@@ -162,33 +229,54 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
     const handleMouseDown = (e: TPointerEventInfo<TPointerEvent>) => {
       if (!e.pointer) return;
 
-      // Only start drawing if clicking on empty space
-      if (canvas.getActiveObject()) return;
+      if (isPanMode) {
+        // Pan mode - start panning
+        isPanningRef.current = true;
+        canvas.selection = false;
+        const clientX = 'clientX' in e.e ? e.e.clientX : (e.e as TouchEvent).touches[0].clientX;
+        const clientY = 'clientY' in e.e ? e.e.clientY : (e.e as TouchEvent).touches[0].clientY;
+        lastPosRef.current = { x: clientX, y: clientY };
+      } else {
+        // Draw mode - only start drawing if clicking on empty space
+        if (canvas.getActiveObject()) return;
 
-      isDrawingRef.current = true;
-      const pointer = canvas.getScenePoint(e.e);
-      startPointRef.current = { x: pointer.x, y: pointer.y };
+        isDrawingRef.current = true;
+        const pointer = canvas.getScenePoint(e.e);
+        startPointRef.current = { x: pointer.x, y: pointer.y };
 
-      const labelConfig = LABELS.find((l) => l.id === selectedLabel);
-      const rect = new Rect({
-        left: pointer.x,
-        top: pointer.y,
-        width: 0,
-        height: 0,
-        fill: 'rgba(255,255,255,0.1)',
-        stroke: labelConfig?.color || '#22c55e',
-        strokeWidth: 2,
-        cornerColor: labelConfig?.color || '#22c55e',
-        cornerSize: 8,
-        transparentCorners: false,
-        data: { label: selectedLabel },
-      });
+        const labelConfig = LABELS.find((l) => l.id === selectedLabel);
+        const rect = new Rect({
+          left: pointer.x,
+          top: pointer.y,
+          width: 0,
+          height: 0,
+          fill: 'rgba(255,255,255,0.1)',
+          stroke: labelConfig?.color || '#22c55e',
+          strokeWidth: 0.25,
+          cornerColor: labelConfig?.color || '#22c55e',
+          cornerSize: 2,
+          transparentCorners: false,
+        }) as AnnotatedRect;
+        rect.label = selectedLabel;
 
-      currentRectRef.current = rect;
-      canvas.add(rect);
+        currentRectRef.current = rect;
+        canvas.add(rect);
+      }
     };
 
     const handleMouseMove = (e: TPointerEventInfo<TPointerEvent>) => {
+      if (isPanningRef.current && lastPosRef.current) {
+        // Pan the canvas
+        const clientX = 'clientX' in e.e ? e.e.clientX : (e.e as TouchEvent).touches[0].clientX;
+        const clientY = 'clientY' in e.e ? e.e.clientY : (e.e as TouchEvent).touches[0].clientY;
+        const vpt = canvas.viewportTransform!;
+        vpt[4] += clientX - lastPosRef.current.x;
+        vpt[5] += clientY - lastPosRef.current.y;
+        canvas.requestRenderAll();
+        lastPosRef.current = { x: clientX, y: clientY };
+        return;
+      }
+
       if (!isDrawingRef.current || !startPointRef.current || !currentRectRef.current)
         return;
 
@@ -209,13 +297,20 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
     };
 
     const handleMouseUp = () => {
+      if (isPanningRef.current) {
+        isPanningRef.current = false;
+        lastPosRef.current = null;
+        canvas.selection = true;
+        return;
+      }
+
       if (!isDrawingRef.current || !currentRectRef.current) return;
 
       isDrawingRef.current = false;
       const rect = currentRectRef.current;
 
-      // Remove if too small
-      if (rect.width! < 10 || rect.height! < 10) {
+      // Remove if too small (allow 1x1 pixel annotations for tiny hotspots)
+      if (rect.width! < 1 || rect.height! < 1) {
         canvas.remove(rect);
       } else {
         rect.set('fill', 'transparent');
@@ -236,7 +331,57 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
       canvas.off('mouse:move', handleMouseMove);
       canvas.off('mouse:up', handleMouseUp);
     };
-  }, [imageLoaded, selectedLabel]);
+  }, [imageLoaded, selectedLabel, isPanMode]);
+
+  const handleSave = useCallback(async () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    setSaving(true);
+    try {
+      // Get the background image to calculate scale
+      const bgImage = canvas.getObjects().find((obj) => obj.type === 'image');
+      if (!bgImage) throw new Error('No image loaded');
+
+      const scale = (bgImage as FabricImage).scaleX || 1;
+      const offsetX = bgImage.left || 50;
+      const offsetY = bgImage.top || 50;
+
+      // Extract bounding boxes
+      const boxes: BoundingBox[] = [];
+      canvas.getObjects().forEach((obj) => {
+        const annotatedRect = obj as AnnotatedRect;
+        if (obj.type === 'rect' && annotatedRect.label) {
+          boxes.push({
+            left: Math.round((obj.left! - offsetX) / scale),
+            top: Math.round((obj.top! - offsetY) / scale),
+            width: Math.round(obj.width! * (obj.scaleX || 1) / scale),
+            height: Math.round(obj.height! * (obj.scaleY || 1) / scale),
+            label: annotatedRect.label,
+          });
+        }
+      });
+
+      // Save to S3
+      const response = await fetch(
+        buildApiUrl(`/projects/${orgId}/${projectId}/annotations?env=${env}`),
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ boundingBoxes: boxes }),
+        }
+      );
+
+      if (!response.ok) throw new Error('Failed to save');
+
+      setBoxCount(boxes.length);
+      alert(`Saved ${boxes.length} annotations successfully!`);
+    } catch (err) {
+      alert('Failed to save: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  }, [env, orgId, projectId]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -267,57 +412,7 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  const handleSave = useCallback(async () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    setSaving(true);
-    try {
-      // Get the background image to calculate scale
-      const bgImage = canvas.getObjects().find((obj) => obj.type === 'image');
-      if (!bgImage) throw new Error('No image loaded');
-
-      const scale = (bgImage as FabricImage).scaleX || 1;
-      const offsetX = bgImage.left || 50;
-      const offsetY = bgImage.top || 50;
-
-      // Extract bounding boxes
-      const boxes: BoundingBox[] = [];
-      canvas.getObjects().forEach((obj) => {
-        const annotatedObj = obj as AnnotatedFabricObject;
-        if (obj.type === 'rect' && annotatedObj.data?.label) {
-          boxes.push({
-            left: Math.round((obj.left! - offsetX) / scale),
-            top: Math.round((obj.top! - offsetY) / scale),
-            width: Math.round(obj.width! * (obj.scaleX || 1) / scale),
-            height: Math.round(obj.height! * (obj.scaleY || 1) / scale),
-            label: annotatedObj.data.label,
-          });
-        }
-      });
-
-      // Save to S3
-      const response = await fetch(
-        `/api/projects/${orgId}/${projectId}/annotations`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ boundingBoxes: boxes }),
-        }
-      );
-
-      if (!response.ok) throw new Error('Failed to save');
-
-      setBoxCount(boxes.length);
-      alert(`Saved ${boxes.length} annotations successfully!`);
-    } catch (err) {
-      alert('Failed to save: ' + (err instanceof Error ? err.message : 'Unknown error'));
-    } finally {
-      setSaving(false);
-    }
-  }, [orgId, projectId]);
+  }, [handleSave]);
 
   const handleZoom = (delta: number) => {
     const canvas = fabricCanvasRef.current;
@@ -359,14 +454,26 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
     const active = canvas.getActiveObject();
     if (active && active.type === 'rect') {
       const labelConfig = LABELS.find((l) => l.id === selectedLabel);
+      const annotatedRect = active as AnnotatedRect;
+      annotatedRect.label = selectedLabel;
       active.set({
         stroke: labelConfig?.color || '#22c55e',
         cornerColor: labelConfig?.color || '#22c55e',
-        data: { label: selectedLabel },
       });
       canvas.renderAll();
     }
   };
+
+  if (!mounted) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 animate-spin text-blue-500 mx-auto mb-4" />
+          <p className="text-gray-300">Initializing...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (error) {
     return (
@@ -404,6 +511,35 @@ export function AnnotationTool({ orgId, projectId }: AnnotationToolProps) {
                   <span>{index + 1}. {label.name}</span>
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Mode Toggle */}
+          <div className="border-t border-gray-700 pt-3">
+            <div className="text-xs text-gray-400 mb-2">Mode</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setIsPanMode(false)}
+                className={`flex items-center justify-center gap-1 px-2 py-1 rounded text-xs ${
+                  !isPanMode
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                <Pencil className="h-3 w-3" />
+                Draw
+              </button>
+              <button
+                onClick={() => setIsPanMode(true)}
+                className={`flex items-center justify-center gap-1 px-2 py-1 rounded text-xs ${
+                  isPanMode
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                <Hand className="h-3 w-3" />
+                Pan
+              </button>
             </div>
           </div>
 

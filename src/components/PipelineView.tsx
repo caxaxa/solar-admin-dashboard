@@ -16,6 +16,7 @@ import {
   Play,
   Edit3,
 } from 'lucide-react';
+import { buildApiUrl } from '@/lib/api-client';
 
 interface PipelineViewProps {
   orgId: string;
@@ -26,8 +27,8 @@ interface PipelineViewProps {
 interface ProjectStatus {
   hasOrthophoto: boolean;
   hasCropAnnotation: boolean;
-  hasPreAnnotations: boolean;
-  hasDefectLabels: boolean;
+  hasInferenceResults: boolean;
+  hasHumanReview: boolean;
   hasReport: boolean;
 }
 
@@ -40,7 +41,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
     async function fetchStatus() {
       try {
         const response = await fetch(
-          `/api/projects/${orgId}/${projectId}/status?env=${env}`
+          buildApiUrl(`/projects/${orgId}/${projectId}/status?env=${env}`)
         );
         if (!response.ok) throw new Error('Failed to fetch status');
         const data = await response.json();
@@ -77,14 +78,14 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       description: 'Define region of interest',
       complete: status?.hasCropAnnotation || false,
       actionLabel: 'Edit Crop',
-      actionHref: `/projects/${orgId}/${projectId}/annotate/crop?env=${env}`,
+      actionHref: `/annotate/crop?orgId=${orgId}&projectId=${projectId}&env=${env}`,
     },
     {
       id: 'inference',
       label: 'AI Inference',
       icon: Brain,
       description: 'Detectron2 panel detection',
-      complete: status?.hasPreAnnotations || false,
+      complete: status?.hasInferenceResults || false,
       actionLabel: 'Run Inference',
       actionType: 'run-inference',
     },
@@ -93,9 +94,9 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       label: 'Human Review',
       icon: CheckSquare,
       description: 'Verify and correct detections',
-      complete: status?.hasDefectLabels || false,
+      complete: status?.hasHumanReview || false,
       actionLabel: 'Review Detections',
-      actionHref: `/projects/${orgId}/${projectId}/annotate/defects?env=${env}`,
+      actionHref: `/annotate/defects?orgId=${orgId}&projectId=${projectId}&env=${env}`,
     },
     {
       id: 'report',
@@ -123,7 +124,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       // Handle run-inference action with the new endpoint
       if (actionType === 'run-inference') {
         const response = await fetch(
-          `/api/projects/${orgId}/${projectId}/run-inference?env=${env}`,
+          buildApiUrl(`/projects/${orgId}/${projectId}/run-inference?env=${env}`),
           { method: 'POST' }
         );
         if (!response.ok) throw new Error('Failed to submit inference job');
@@ -133,7 +134,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       } else {
         // Generic action handler for other action types
         const response = await fetch(
-          `/api/projects/${orgId}/${projectId}/actions/${actionType}?env=${env}`,
+          buildApiUrl(`/projects/${orgId}/${projectId}/actions/${actionType}?env=${env}`),
           { method: 'POST' }
         );
         if (!response.ok) {
@@ -153,7 +154,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
 
       // Refresh status
       const statusResponse = await fetch(
-        `/api/projects/${orgId}/${projectId}/status?env=${env}`
+        buildApiUrl(`/projects/${orgId}/${projectId}/status?env=${env}`)
       );
       if (statusResponse.ok) {
         setStatus(await statusResponse.json());
