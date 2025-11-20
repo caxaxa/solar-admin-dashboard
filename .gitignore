@@ -20,6 +20,8 @@
 
 # production
 /build
+/.aws-sam
+**/.aws-sam
 
 # misc
 .DS_Store
