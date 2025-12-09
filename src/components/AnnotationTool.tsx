@@ -12,7 +12,13 @@ import {
   Trash2,
   Tag,
   Hand,
-  Pencil,
+  Pointer,
+  Grid3X3,
+  MousePointer,
+  Undo2,
+  Redo2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { buildApiUrl } from '@/lib/api-client';
 
@@ -56,11 +62,44 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPanMode, setIsPanMode] = useState(false);
+  const [aligning, setAligning] = useState(false);
+  const [isClickToPlace, setIsClickToPlace] = useState(false);
+  const [medianPanelSize, setMedianPanelSize] = useState<{width: number, height: number} | null>(null);
+  const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(new Set());
   const isDrawingRef = useRef(false);
   const isPanningRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const startPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentRectRef = useRef<Rect | null>(null);
+
+  // Undo/Redo history
+  const undoStackRef = useRef<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
+
+  // Helper to save state to undo stack (inline function for use in effects)
+  const saveUndoState = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    const state = JSON.stringify(
+      canvas.getObjects()
+        .filter(obj => obj.type === 'rect')
+        .map(obj => {
+          const rect = obj as AnnotatedRect;
+          return {
+            left: obj.left,
+            top: obj.top,
+            width: obj.width,
+            height: obj.height,
+            scaleX: obj.scaleX,
+            scaleY: obj.scaleY,
+            label: rect.label,
+          };
+        })
+    );
+    undoStackRef.current.push(state);
+    if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+    redoStackRef.current = [];
+  };
 
   // Ensure component only renders on client
   useEffect(() => {
@@ -156,7 +195,9 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
           const boxes = annotations[0]?.boundingBox?.boundingBoxes || [];
           console.log('Loading', boxes.length, 'bounding boxes');
           boxes.forEach((box: BoundingBox) => {
-            const labelConfig = LABELS.find((l) => l.id === box.label);
+            // Normalize label: solarpanels → default_panel for consistency
+            const normalizedLabel = box.label === 'solarpanels' ? 'default_panel' : box.label;
+            const labelConfig = LABELS.find((l) => l.id === normalizedLabel);
             const rect = new Rect({
               left: 50 + box.left * scale,
               top: 50 + box.top * scale,
@@ -169,7 +210,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
               cornerSize: 2,
               transparentCorners: false,
             }) as AnnotatedRect;
-            rect.label = box.label;
+            rect.label = normalizedLabel;
             canvas.add(rect);
           });
           setBoxCount(boxes.length);
@@ -204,8 +245,8 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
       let newZoom = canvas.getZoom();
       newZoom *= 0.999 ** delta;
 
-      // Limit zoom between 0.1x and 20x
-      if (newZoom > 20) newZoom = 20;
+      // Limit zoom between 0.1x and 100x (10,000%)
+      if (newZoom > 100) newZoom = 100;
       if (newZoom < 0.1) newZoom = 0.1;
 
       canvas.zoomToPoint(new Point(evt.offsetX, evt.offsetY), newZoom);
@@ -236,10 +277,36 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
         const clientX = 'clientX' in e.e ? e.e.clientX : (e.e as TouchEvent).touches[0].clientX;
         const clientY = 'clientY' in e.e ? e.e.clientY : (e.e as TouchEvent).touches[0].clientY;
         lastPosRef.current = { x: clientX, y: clientY };
+      } else if (isClickToPlace && medianPanelSize) {
+        // Click to Place mode - place a fixed-size panel at click point
+        if (canvas.getActiveObject()) return;
+
+        saveUndoState(); // Save state before adding
+        const pointer = canvas.getScenePoint(e.e);
+        const labelConfig = LABELS.find((l) => l.id === 'default_panel');
+
+        const rect = new Rect({
+          left: pointer.x - medianPanelSize.width / 2,
+          top: pointer.y - medianPanelSize.height / 2,
+          width: medianPanelSize.width,
+          height: medianPanelSize.height,
+          fill: 'transparent',
+          stroke: labelConfig?.color || '#22c55e',
+          strokeWidth: 0.25,
+          cornerColor: labelConfig?.color || '#22c55e',
+          cornerSize: 2,
+          transparentCorners: false,
+        }) as AnnotatedRect;
+        rect.label = 'default_panel';
+
+        canvas.add(rect);
+        setBoxCount((prev) => prev + 1);
+        canvas.renderAll();
       } else {
         // Draw mode - only start drawing if clicking on empty space
         if (canvas.getActiveObject()) return;
 
+        saveUndoState(); // Save state before drawing
         isDrawingRef.current = true;
         const pointer = canvas.getScenePoint(e.e);
         startPointRef.current = { x: pointer.x, y: pointer.y };
@@ -331,7 +398,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
       canvas.off('mouse:move', handleMouseMove);
       canvas.off('mouse:up', handleMouseUp);
     };
-  }, [imageLoaded, selectedLabel, isPanMode]);
+  }, [imageLoaded, selectedLabel, isPanMode, isClickToPlace, medianPanelSize]);
 
   const handleSave = useCallback(async () => {
     const canvas = fabricCanvasRef.current;
@@ -383,14 +450,176 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
     }
   }, [env, orgId, projectId]);
 
+  // Save current canvas state to undo stack
+  const saveToUndoStack = useCallback(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const state = JSON.stringify(
+      canvas.getObjects()
+        .filter(obj => obj.type === 'rect')
+        .map(obj => {
+          const rect = obj as AnnotatedRect;
+          return {
+            left: obj.left,
+            top: obj.top,
+            width: obj.width,
+            height: obj.height,
+            scaleX: obj.scaleX,
+            scaleY: obj.scaleY,
+            label: rect.label,
+          };
+        })
+    );
+    undoStackRef.current.push(state);
+    // Limit stack size
+    if (undoStackRef.current.length > 50) {
+      undoStackRef.current.shift();
+    }
+    // Clear redo stack when new action is performed
+    redoStackRef.current = [];
+  }, []);
+
+  // Undo last action
+  const handleUndo = useCallback(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || undoStackRef.current.length === 0) return;
+
+    // Save current state to redo stack
+    const currentState = JSON.stringify(
+      canvas.getObjects()
+        .filter(obj => obj.type === 'rect')
+        .map(obj => {
+          const rect = obj as AnnotatedRect;
+          return {
+            left: obj.left,
+            top: obj.top,
+            width: obj.width,
+            height: obj.height,
+            scaleX: obj.scaleX,
+            scaleY: obj.scaleY,
+            label: rect.label,
+          };
+        })
+    );
+    redoStackRef.current.push(currentState);
+
+    // Restore previous state
+    const previousState = undoStackRef.current.pop();
+    if (!previousState) return;
+
+    const boxes = JSON.parse(previousState);
+
+    // Remove all rects
+    const rectsToRemove = canvas.getObjects().filter(obj => obj.type === 'rect');
+    rectsToRemove.forEach(obj => canvas.remove(obj));
+
+    // Restore boxes
+    boxes.forEach((box: any) => {
+      const labelConfig = LABELS.find((l) => l.id === box.label);
+      const rect = new Rect({
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        scaleX: box.scaleX || 1,
+        scaleY: box.scaleY || 1,
+        fill: 'transparent',
+        stroke: labelConfig?.color || '#22c55e',
+        strokeWidth: 0.25,
+        cornerColor: labelConfig?.color || '#22c55e',
+        cornerSize: 2,
+        transparentCorners: false,
+      }) as AnnotatedRect;
+      rect.label = box.label;
+      canvas.add(rect);
+    });
+
+    setBoxCount(boxes.length);
+    canvas.renderAll();
+  }, []);
+
+  // Redo last undone action
+  const handleRedo = useCallback(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || redoStackRef.current.length === 0) return;
+
+    // Save current state to undo stack
+    const currentState = JSON.stringify(
+      canvas.getObjects()
+        .filter(obj => obj.type === 'rect')
+        .map(obj => {
+          const rect = obj as AnnotatedRect;
+          return {
+            left: obj.left,
+            top: obj.top,
+            width: obj.width,
+            height: obj.height,
+            scaleX: obj.scaleX,
+            scaleY: obj.scaleY,
+            label: rect.label,
+          };
+        })
+    );
+    undoStackRef.current.push(currentState);
+
+    // Restore redo state
+    const redoState = redoStackRef.current.pop();
+    if (!redoState) return;
+
+    const boxes = JSON.parse(redoState);
+
+    // Remove all rects
+    const rectsToRemove = canvas.getObjects().filter(obj => obj.type === 'rect');
+    rectsToRemove.forEach(obj => canvas.remove(obj));
+
+    // Restore boxes
+    boxes.forEach((box: any) => {
+      const labelConfig = LABELS.find((l) => l.id === box.label);
+      const rect = new Rect({
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        scaleX: box.scaleX || 1,
+        scaleY: box.scaleY || 1,
+        fill: 'transparent',
+        stroke: labelConfig?.color || '#22c55e',
+        strokeWidth: 0.25,
+        cornerColor: labelConfig?.color || '#22c55e',
+        cornerSize: 2,
+        transparentCorners: false,
+      }) as AnnotatedRect;
+      rect.label = box.label;
+      canvas.add(rect);
+    });
+
+    setBoxCount(boxes.length);
+    canvas.renderAll();
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Undo: Ctrl+Z
+      if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+      // Redo: Ctrl+Y or Ctrl+Shift+Z
+      if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+      // Delete selected
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const canvas = fabricCanvasRef.current;
         if (!canvas) return;
         const active = canvas.getActiveObject();
         if (active && active.type === 'rect') {
+          saveToUndoStack();
           canvas.remove(active);
           setBoxCount((prev) => prev - 1);
           canvas.renderAll();
@@ -403,6 +632,39 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
           setSelectedLabel(LABELS[index].id);
         }
       }
+      // Mode shortcuts: S = Select, P = Pan, C = Click
+      if (e.key === 's' && !e.ctrlKey) {
+        setIsPanMode(false);
+        setIsClickToPlace(false);
+      }
+      if (e.key === 'p') {
+        setIsPanMode(true);
+        setIsClickToPlace(false);
+      }
+      if (e.key === 'c' && !e.ctrlKey) {
+        // Trigger click-to-place mode (same as clicking the button)
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+        const panels = canvas.getObjects().filter(obj => {
+          const rect = obj as AnnotatedRect;
+          return obj.type === 'rect' &&
+            (rect.label === 'default_panel' || rect.label === 'solarpanels');
+        });
+        if (panels.length < 1) {
+          alert('No existing panels found to calculate size from');
+          return;
+        }
+        const widths = panels.map(p => p.width! * (p.scaleX || 1));
+        const heights = panels.map(p => p.height! * (p.scaleY || 1));
+        widths.sort((a, b) => a - b);
+        heights.sort((a, b) => a - b);
+        setMedianPanelSize({
+          width: widths[Math.floor(widths.length / 2)],
+          height: heights[Math.floor(heights.length / 2)],
+        });
+        setIsClickToPlace(true);
+        setIsPanMode(false);
+      }
       // Ctrl+S to save
       if (e.ctrlKey && e.key === 's') {
         e.preventDefault();
@@ -412,13 +674,13 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSave]);
+  }, [handleSave, handleUndo, handleRedo, saveToUndoStack]);
 
   const handleZoom = (delta: number) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const newZoom = Math.max(0.1, Math.min(5, zoom + delta));
+    const newZoom = Math.max(0.1, Math.min(100, zoom + delta));
     setZoom(newZoom);
 
     const center = canvas.getCenterPoint();
@@ -441,6 +703,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
 
     const active = canvas.getActiveObject();
     if (active && active.type === 'rect') {
+      saveUndoState();
       canvas.remove(active);
       setBoxCount((prev) => prev - 1);
       canvas.renderAll();
@@ -453,6 +716,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
 
     const active = canvas.getActiveObject();
     if (active && active.type === 'rect') {
+      saveUndoState();
       const labelConfig = LABELS.find((l) => l.id === selectedLabel);
       const annotatedRect = active as AnnotatedRect;
       annotatedRect.label = selectedLabel;
@@ -462,6 +726,165 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
       });
       canvas.renderAll();
     }
+  };
+
+  // Toggle visibility of a label class
+  const toggleLabelVisibility = (labelId: string) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const newHidden = new Set(hiddenLabels);
+    const isCurrentlyHidden = newHidden.has(labelId);
+
+    if (isCurrentlyHidden) {
+      newHidden.delete(labelId);
+    } else {
+      newHidden.add(labelId);
+    }
+    setHiddenLabels(newHidden);
+
+    // Update visibility of all rects with this label
+    canvas.getObjects().forEach((obj) => {
+      const rect = obj as AnnotatedRect;
+      if (obj.type === 'rect') {
+        // Check both the label and solarpanels (which maps to default_panel)
+        const effectiveLabel = rect.label === 'solarpanels' ? 'default_panel' : rect.label;
+        if (effectiveLabel === labelId) {
+          obj.set('visible', isCurrentlyHidden); // Toggle: was hidden, now visible
+        }
+      }
+    });
+    canvas.renderAll();
+  };
+
+  const handleAlignPanels = useCallback(async () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    saveUndoState(); // Save state before alignment
+    setAligning(true);
+    try {
+      // Get the background image for scale calculation
+      const bgImage = canvas.getObjects().find((obj) => obj.type === 'image');
+      if (!bgImage) throw new Error('No image loaded');
+
+      const scale = (bgImage as FabricImage).scaleX || 1;
+      const offsetX = bgImage.left || 50;
+      const offsetY = bgImage.top || 50;
+
+      // Extract only panel boxes (in image coordinates)
+      // Check both 'default_panel' and 'solarpanels' labels for compatibility
+      const panelBoxes: BoundingBox[] = [];
+      let defectCount = 0;
+
+      canvas.getObjects().forEach((obj) => {
+        const annotatedRect = obj as AnnotatedRect;
+        const isPanel = obj.type === 'rect' &&
+          (annotatedRect.label === 'default_panel' || annotatedRect.label === 'solarpanels');
+        if (isPanel) {
+          panelBoxes.push({
+            left: Math.round((obj.left! - offsetX) / scale),
+            top: Math.round((obj.top! - offsetY) / scale),
+            width: Math.round(obj.width! * (obj.scaleX || 1) / scale),
+            height: Math.round(obj.height! * (obj.scaleY || 1) / scale),
+            label: 'default_panel',
+          });
+        } else if (obj.type === 'rect' && annotatedRect.label) {
+          defectCount++;
+        }
+      });
+
+      if (panelBoxes.length < 3) {
+        alert('Need at least 3 panels to align');
+        return;
+      }
+
+      // Call alignment API
+      const response = await fetch(
+        buildApiUrl(`/projects/${orgId}/${projectId}/align-panels?env=${env}`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ boundingBoxes: panelBoxes }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Alignment failed: ${errorText}`);
+      }
+      const { aligned_boxes } = await response.json();
+
+      // Remove old panel rects (keep defects)
+      const objectsToRemove: FabricObject[] = [];
+      canvas.getObjects().forEach((obj) => {
+        const annotatedRect = obj as AnnotatedRect;
+        const isPanel = obj.type === 'rect' &&
+          (annotatedRect.label === 'default_panel' || annotatedRect.label === 'solarpanels');
+        if (isPanel) {
+          objectsToRemove.push(obj);
+        }
+      });
+      objectsToRemove.forEach((obj) => canvas.remove(obj));
+
+      // Add aligned panel rects
+      const labelConfig = LABELS.find((l) => l.id === 'default_panel');
+      aligned_boxes.forEach((box: BoundingBox) => {
+        const rect = new Rect({
+          left: offsetX + box.left * scale,
+          top: offsetY + box.top * scale,
+          width: box.width * scale,
+          height: box.height * scale,
+          fill: 'transparent',
+          stroke: labelConfig?.color || '#22c55e',
+          strokeWidth: 0.25,
+          cornerColor: labelConfig?.color || '#22c55e',
+          cornerSize: 2,
+          transparentCorners: false,
+        }) as AnnotatedRect;
+        rect.label = 'default_panel';
+        canvas.add(rect);
+      });
+
+      setBoxCount(aligned_boxes.length + defectCount);
+      canvas.renderAll();
+      alert(`Aligned ${aligned_boxes.length} panels!`);
+    } catch (err) {
+      alert('Alignment failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setAligning(false);
+    }
+  }, [env, orgId, projectId]);
+
+  const enterClickToPlaceMode = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    // Get panel dimensions from existing panels (check both labels for compatibility)
+    const panels = canvas.getObjects().filter(obj => {
+      const rect = obj as AnnotatedRect;
+      return obj.type === 'rect' &&
+        (rect.label === 'default_panel' || rect.label === 'solarpanels');
+    });
+
+    if (panels.length < 1) {
+      alert('No existing panels found to calculate size from');
+      return;
+    }
+
+    const widths = panels.map(p => p.width! * (p.scaleX || 1));
+    const heights = panels.map(p => p.height! * (p.scaleY || 1));
+
+    // Sort and get median
+    widths.sort((a, b) => a - b);
+    heights.sort((a, b) => a - b);
+
+    setMedianPanelSize({
+      width: widths[Math.floor(widths.length / 2)],
+      height: heights[Math.floor(heights.length / 2)],
+    });
+    setIsClickToPlace(true);
+    setIsPanMode(false);
   };
 
   if (!mounted) {
@@ -493,44 +916,56 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
           {/* Label selector */}
           <div>
             <div className="text-xs text-gray-400 mb-2">Label (1-4)</div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
               {LABELS.map((label, index) => (
-                <button
-                  key={label.id}
-                  onClick={() => setSelectedLabel(label.id)}
-                  className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${
-                    selectedLabel === label.id
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
-                >
-                  <div
-                    className="w-3 h-3 rounded"
-                    style={{ backgroundColor: label.color }}
-                  />
-                  <span>{index + 1}. {label.name}</span>
-                </button>
+                <div key={label.id} className="flex items-center gap-1">
+                  <button
+                    onClick={() => setSelectedLabel(label.id)}
+                    className={`flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs ${
+                      selectedLabel === label.id
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    <div
+                      className="w-3 h-3 rounded"
+                      style={{ backgroundColor: label.color }}
+                    />
+                    <span>{index + 1}. {label.name}</span>
+                  </button>
+                  <button
+                    onClick={() => toggleLabelVisibility(label.id)}
+                    className={`p-1 rounded text-xs ${
+                      hiddenLabels.has(label.id)
+                        ? 'bg-red-600 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                    title={hiddenLabels.has(label.id) ? 'Show' : 'Hide'}
+                  >
+                    {hiddenLabels.has(label.id) ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  </button>
+                </div>
               ))}
             </div>
           </div>
 
           {/* Mode Toggle */}
           <div className="border-t border-gray-700 pt-3">
-            <div className="text-xs text-gray-400 mb-2">Mode</div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="text-xs text-gray-400 mb-2">Mode (S/P/C)</div>
+            <div className="grid grid-cols-3 gap-2">
               <button
-                onClick={() => setIsPanMode(false)}
+                onClick={() => { setIsPanMode(false); setIsClickToPlace(false); }}
                 className={`flex items-center justify-center gap-1 px-2 py-1 rounded text-xs ${
-                  !isPanMode
+                  !isPanMode && !isClickToPlace
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                 }`}
               >
-                <Pencil className="h-3 w-3" />
-                Draw
+                <Pointer className="h-3 w-3" />
+                Select
               </button>
               <button
-                onClick={() => setIsPanMode(true)}
+                onClick={() => { setIsPanMode(true); setIsClickToPlace(false); }}
                 className={`flex items-center justify-center gap-1 px-2 py-1 rounded text-xs ${
                   isPanMode
                     ? 'bg-blue-600 text-white'
@@ -539,6 +974,38 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
               >
                 <Hand className="h-3 w-3" />
                 Pan
+              </button>
+              <button
+                onClick={() => isClickToPlace ? setIsClickToPlace(false) : enterClickToPlaceMode()}
+                className={`flex items-center justify-center gap-1 px-2 py-1 rounded text-xs ${
+                  isClickToPlace
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                <MousePointer className="h-3 w-3" />
+                Click
+              </button>
+            </div>
+          </div>
+
+          {/* Undo/Redo */}
+          <div className="border-t border-gray-700 pt-3">
+            <div className="text-xs text-gray-400 mb-2">History</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={handleUndo}
+                className="flex items-center justify-center gap-1 px-2 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600"
+              >
+                <Undo2 className="h-3 w-3" />
+                Undo
+              </button>
+              <button
+                onClick={handleRedo}
+                className="flex items-center justify-center gap-1 px-2 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600"
+              >
+                <Redo2 className="h-3 w-3" />
+                Redo
               </button>
             </div>
           </div>
@@ -560,6 +1027,14 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
               >
                 <Tag className="h-3 w-3" />
                 Apply Label
+              </button>
+              <button
+                onClick={handleAlignPanels}
+                disabled={aligning}
+                className="flex items-center gap-2 w-full px-2 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 disabled:opacity-50"
+              >
+                {aligning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Grid3X3 className="h-3 w-3" />}
+                Align Panels
               </button>
             </div>
           </div>

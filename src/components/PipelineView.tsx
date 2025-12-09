@@ -15,6 +15,9 @@ import {
   Loader2,
   Play,
   Edit3,
+  Eye,
+  ExternalLink,
+  Map,
 } from 'lucide-react';
 import { buildApiUrl } from '@/lib/api-client';
 
@@ -30,6 +33,8 @@ interface ProjectStatus {
   hasInferenceResults: boolean;
   hasHumanReview: boolean;
   hasReport: boolean;
+  isReleased?: boolean;
+  reportFullUrl?: string | null;
 }
 
 export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
@@ -108,13 +113,25 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       actionType: 'generate-report',
     },
     {
+      id: 'review-report',
+      label: 'Review Report',
+      icon: Eye,
+      description: 'Verify generated PDF before release',
+      complete: status?.hasReport || false, // Same as generate - complete when report exists
+      actionLabel: 'View PDF',
+      externalUrl: status?.reportFullUrl || undefined,
+      defectMapHref: status?.hasReport
+        ? `/defect-map?orgId=${orgId}&projectId=${projectId}&env=${env}`
+        : undefined,
+    },
+    {
       id: 'release',
       label: 'Release to Client',
       icon: Send,
-      description: 'Make available to end user',
-      complete: false,
-      actionLabel: 'Release',
-      actionType: 'release',
+      description: 'Make available to end user & archive training data',
+      complete: status?.isReleased || false,
+      actionLabel: status?.isReleased ? 'Released' : 'Release',
+      actionType: status?.isReleased ? undefined : 'release',
     },
   ];
 
@@ -148,7 +165,12 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
           console.log(`${actionType} job submitted:`, data.jobId);
           alert(`Job submitted successfully!\nAction: ${actionType}\nJob ID: ${data.jobId}`);
         } else if (data.success) {
-          alert(`${actionType} completed successfully!`);
+          // Special handling for release action
+          if (actionType === 'release' && data.training_data_archived) {
+            alert(`Project released successfully!\n\nTraining data archived:\n${data.archived_files?.length || 0} files copied to training bucket.`);
+          } else {
+            alert(data.message || `${actionType} completed successfully!`);
+          }
         }
       }
 
@@ -226,7 +248,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
                 <p className="text-sm text-gray-500">{stage.description}</p>
               </div>
 
-              <div className="flex-shrink-0">
+              <div className="flex-shrink-0 flex gap-2">
                 {stage.actionHref && (
                   <Link
                     href={stage.actionHref}
@@ -234,6 +256,26 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
                   >
                     <Edit3 className="h-4 w-4" />
                     {stage.actionLabel}
+                  </Link>
+                )}
+                {stage.externalUrl && (
+                  <a
+                    href={stage.externalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    {stage.actionLabel}
+                  </a>
+                )}
+                {stage.defectMapHref && (
+                  <Link
+                    href={stage.defectMapHref}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    <Map className="h-4 w-4" />
+                    Defect Map
                   </Link>
                 )}
                 {stage.actionType && (

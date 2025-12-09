@@ -222,6 +222,10 @@ Resources:
                 - !Sub arn:aws:s3:::${OrthosBucketDev}/*
                 - !Sub arn:aws:s3:::${OrthosBucketProd}
                 - !Sub arn:aws:s3:::${OrthosBucketProd}/*
+                - !Sub arn:aws:s3:::${ReportsBucketDev}
+                - !Sub arn:aws:s3:::${ReportsBucketDev}/*
+                - !Sub arn:aws:s3:::${ReportsBucketProd}
+                - !Sub arn:aws:s3:::${ReportsBucketProd}/*
       Events:
         Api:
           Type: HttpApi
@@ -260,12 +264,43 @@ Resources:
               Action:
                 - batch:SubmitJob
               Resource: '*'
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:HeadObject
+                - s3:PutObject
+                - s3:CopyObject
+              Resource:
+                - !Sub arn:aws:s3:::${GroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${GroundtruthBucketProd}/*
+                - !Sub arn:aws:s3:::${OrthosBucketDev}/*
+                - !Sub arn:aws:s3:::${OrthosBucketProd}/*
+                - arn:aws:s3:::solar-ai-training/*
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
       Events:
         Api:
           Type: HttpApi
           Properties:
             ApiId: !Ref AdminHttpApi
             Path: /projects/{orgId}/{projectId}/actions/{actionType}
+            Method: POST
+
+  AlignPanelsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: align-panels/index.handler
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/align-panels
             Method: POST
 
 Outputs:

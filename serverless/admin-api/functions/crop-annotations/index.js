@@ -53,12 +53,12 @@ exports.handler = async (event) => {
       // Match the path the batch job expects
       const annotationsKey = `${orgId}/projects/${projectId}/groundtruth/crop_annotation.json`;
 
-      // For crop annotation, we need a browser-viewable format (JPG/PNG) not TIF
-      // Try to find a preview/JPG version of the original orthophoto
+      // IMPORTANT: Use the JPG representation of the ORIGINAL odm_orthophoto.tif
+      // Coordinates will map 1:1 to odm_orthophoto.tif dimensions
+      // The batch job applies crop/rotate BEFORE resampling to 1.6cm
       const imageCandidates = [
         `${orgId}/projects/${projectId}/odm_orthophoto.jpg`,
         `${orgId}/projects/${projectId}/odm_orthophoto_preview.png`,
-        `${orgId}/projects/${projectId}/odm_orthophoto/odm_orthophoto_preview.jpg`,
       ];
 
       let imageUrl = null;
@@ -76,7 +76,14 @@ exports.handler = async (event) => {
         return errorResponse(404, 'No preview image found. Please ensure ODM processing is complete.');
       }
 
-      const imageMetadata = null;
+      // Try to get image dimensions from stored metadata
+      let imageMetadata = null;
+      try {
+        const metadataKey = `${orgId}/projects/${projectId}/groundtruth/crop_annotation_metadata.json`;
+        imageMetadata = await readJson(groundtruthBucket, metadataKey);
+      } catch (error) {
+        console.log('No image metadata found, will be captured on first save');
+      }
 
       const defaultAnnotations = {
         polygon: [],
@@ -113,14 +120,29 @@ exports.handler = async (event) => {
 
   if (method === 'PUT') {
     try {
-      const annotations = parseBody(event);
+      const body = parseBody(event);
+      if (!body) {
+        return errorResponse(400, 'Invalid request body');
+      }
+
+      const annotations = body.annotations || body;
+      const imageMetadata = body.imageMetadata;
+
       if (!annotations || !Array.isArray(annotations.polygon)) {
         return errorResponse(400, 'Invalid annotations payload');
       }
 
-      // Match the path the batch job expects
+      // Save annotations
       const annotationsKey = `${orgId}/projects/${projectId}/groundtruth/crop_annotation.json`;
       await writeJson(groundtruthBucket, annotationsKey, annotations);
+
+      // Save image metadata if provided
+      if (imageMetadata && imageMetadata.width && imageMetadata.height) {
+        const metadataKey = `${orgId}/projects/${projectId}/groundtruth/crop_annotation_metadata.json`;
+        await writeJson(groundtruthBucket, metadataKey, imageMetadata);
+        console.log(`Saved image metadata: ${imageMetadata.width}x${imageMetadata.height}`);
+      }
+
       return jsonResponse(200, { success: true });
     } catch (error) {
       console.error('Failed to save crop annotations', error);

@@ -38,7 +38,9 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
   const [toolMode, setToolMode] = useState<ToolMode>('select');
   const toolModeRef = useRef<ToolMode>('select'); // Keep ref in sync with state
   const [imageScale, setImageScale] = useState(1);
+  const imageScaleRef = useRef<number>(1); // Keep ref in sync with state
   const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
+  const imageOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 }); // Keep ref in sync with state
 
   // Annotation state
   const [polygonPoints, setPolygonPoints] = useState<Point[]>([]);
@@ -213,7 +215,16 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
 
       const img = await new Promise<FabricImage>((resolve, reject) => {
         htmlImg.onload = () => {
-          console.log('HTML Image loaded:', htmlImg.width, 'x', htmlImg.height);
+          console.log('HTML Image loaded:', htmlImg.naturalWidth, 'x', htmlImg.naturalHeight);
+
+          // CRITICAL: Store the original image dimensions BEFORE any scaling
+          const imageMetadata = {
+            width: htmlImg.naturalWidth,
+            height: htmlImg.naturalHeight,
+          };
+          sessionStorage.setItem('cropImageMetadata', JSON.stringify(imageMetadata));
+          console.log('Stored image metadata:', imageMetadata);
+
           const fabricImg = new FabricImage(htmlImg);
           resolve(fabricImg);
         };
@@ -224,24 +235,32 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
         htmlImg.src = imageUrl;
       });
 
-      console.log('Image loaded successfully:', img.width, 'x', img.height);
+      console.log('Fabric image created:', img.width, 'x', img.height);
 
       // Calculate scale to fit in canvas
       const canvasWidth = canvas.width!;
       const canvasHeight = canvas.height!;
-      const imgWidth = img.width!;
-      const imgHeight = img.height!;
+      // CRITICAL: Use the NATURAL image dimensions for scale calculation, not Fabric.js dimensions
+      const imgWidth = htmlImg.naturalWidth;
+      const imgHeight = htmlImg.naturalHeight;
+      console.log('Using natural dimensions for scale:', imgWidth, 'x', imgHeight);
 
       const scale = Math.min(
         canvasWidth / imgWidth,
         canvasHeight / imgHeight
       ) * 0.9;
 
-      const offsetX = (canvasWidth - imgWidth * scale) / 2;
-      const offsetY = (canvasHeight - imgHeight * scale) / 2;
+      // CRITICAL: Position image at 0,0 so coordinates map directly
+      // No offset/centering needed - image top-left should be at canvas 0,0
+      const offsetX = 0;
+      const offsetY = 0;
 
       setImageScale(scale);
+      imageScaleRef.current = scale;
       setImageOffset({ x: offsetX, y: offsetY });
+      imageOffsetRef.current = { x: offsetX, y: offsetY };
+
+      console.log('Scale:', scale, 'Offset:', offsetX, offsetY);
 
       img.set({
         scaleX: scale,
@@ -281,16 +300,25 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
   };
 
   const canvasToImageCoords = (x: number, y: number): Point => {
-    return {
-      x: Math.round((x - imageOffset.x) / imageScale),
-      y: Math.round((y - imageOffset.y) / imageScale),
+    // CRITICAL: Use refs instead of state to avoid stale closure values
+    const scale = imageScaleRef.current;
+    const offset = imageOffsetRef.current;
+    console.log('canvasToImageCoords:', { x, y, scale, offset });
+    const result = {
+      x: Math.round((x - offset.x) / scale),
+      y: Math.round((y - offset.y) / scale),
     };
+    console.log('  -> result:', result);
+    return result;
   };
 
   const imageToCanvasCoords = (x: number, y: number): Point => {
+    // CRITICAL: Use refs instead of state to avoid stale closure values
+    const scale = imageScaleRef.current;
+    const offset = imageOffsetRef.current;
     return {
-      x: x * imageScale + imageOffset.x,
-      y: y * imageScale + imageOffset.y,
+      x: x * scale + offset.x,
+      y: y * scale + offset.y,
     };
   };
 
@@ -516,6 +544,10 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
 
     setSaving(true);
     try {
+      // Get image metadata from session storage
+      const imageMetadataStr = sessionStorage.getItem('cropImageMetadata');
+      const imageMetadata = imageMetadataStr ? JSON.parse(imageMetadataStr) : null;
+
       const annotations: CropAnnotations = {
         polygon: polygonPoints,
         rotationLine,
@@ -529,7 +561,10 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(annotations),
+          body: JSON.stringify({
+            annotations,
+            imageMetadata,
+          }),
         }
       );
 

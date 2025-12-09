@@ -6,10 +6,12 @@ AWS.config.update({ region });
 const s3 = new AWS.S3({ signatureVersion: 'v4' });
 const cognito = new AWS.CognitoIdentityServiceProvider();
 const batch = new AWS.Batch();
+const dynamodb = new AWS.DynamoDB.DocumentClient();
 
 module.exports = {
   AWS,
   s3,
   cognito,
   batch,
+  dynamodb,
 };

@@ -1,6 +1,8 @@
 const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
 const { normalizeEnv, getBucketConfig } = require('../shared/env');
-const { objectExists } = require('../shared/s3-utils');
+const { objectExists, getSignedGetUrl } = require('../shared/s3-utils');
+
+const TRAINING_BUCKET = 'solar-ai-training';
 
 function getPathParams(event) {
   const params = event.pathParameters || {};
@@ -42,12 +44,36 @@ exports.handler = async (event) => {
       objectExists(reportsBucket, `${orgId}/projects/${projectId}/thermographic-report/report-lowres.pdf`).catch(() => false),
     ]);
 
+    // Check if project is released by looking for metadata.json in training bucket
+    const isReleased = await objectExists(
+      TRAINING_BUCKET,
+      `${orgId}/${projectId}/metadata.json`
+    ).catch(() => false);
+
+    // Generate signed URL for full-resolution report PDF if report exists
+    let reportFullUrl = null;
+    if (hasReport) {
+      const reportFullKey = `${orgId}/projects/${projectId}/thermographic-report/report-full.pdf`;
+      try {
+        // Check if full-res exists, fallback to lowres
+        const hasFullRes = await objectExists(reportsBucket, reportFullKey);
+        const pdfKey = hasFullRes
+          ? reportFullKey
+          : `${orgId}/projects/${projectId}/thermographic-report/report-lowres.pdf`;
+        reportFullUrl = getSignedGetUrl(reportsBucket, pdfKey, 7200); // 2 hour expiry
+      } catch (err) {
+        console.warn('Failed to generate signed URL for report:', err);
+      }
+    }
+
     return jsonResponse(200, {
       hasOrthophoto,
       hasCropAnnotation,
       hasInferenceResults,
       hasHumanReview,
       hasReport,
+      reportFullUrl,
+      isReleased,
     });
   } catch (error) {
     console.error('Failed to fetch project status', error);

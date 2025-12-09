@@ -70,7 +70,10 @@ exports.handler = async (event) => {
       const savedAnnotations = await readJson(groundtruthBucket, humanReviewedKey);
       if (savedAnnotations) {
         console.log('Loaded human-reviewed annotations from groundtruth bucket');
-        annotations = [savedAnnotations];
+        // savedAnnotations can be either:
+        // - An array: [{boundingBox: {...}}] (inference output format)
+        // - An object: {boundingBox: {...}} (single annotation format)
+        annotations = Array.isArray(savedAnnotations) ? savedAnnotations : [savedAnnotations];
       } else {
         console.log('No human-reviewed annotations, trying inference results...');
 
