@@ -1,8 +1,49 @@
-const { batch, s3, dynamodb } = require('../shared/aws-clients');
+const { batch, s3, dynamodb, cognito } = require('../shared/aws-clients');
 const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
 const { normalizeEnv, getJobResources } = require('../shared/env');
+const { sendEmail } = require('../send-email');
 
 const TRAINING_BUCKET = 'solar-ai-training';
+
+/**
+ * Get user email from Cognito by user ID (sub)
+ */
+async function getUserEmail(userId) {
+  try {
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (!userPoolId) return null;
+
+    const response = await cognito.listUsers({
+      UserPoolId: userPoolId,
+      Filter: `sub = "${userId}"`,
+      Limit: 1,
+    }).promise();
+
+    if (response.Users && response.Users.length > 0) {
+      const emailAttr = response.Users[0].Attributes?.find(attr => attr.Name === 'email');
+      return emailAttr?.Value || null;
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to get user email', error);
+    return null;
+  }
+}
+
+/**
+ * Get project details from DynamoDB
+ */
+async function getProjectDetails(projectId, env) {
+  const projectsTable = `solar-projects-${env}`;
+  const result = await dynamodb.get({
+    TableName: projectsTable,
+    Key: {
+      PK: `PROJECT#${projectId}`,
+      SK: 'METADATA',
+    },
+  }).promise();
+  return result.Item;
+}
 
 async function handleRelease(orgId, projectId, env) {
   const orthosBucket = `solar-orthos-${env}`;
@@ -75,6 +116,7 @@ async function handleRelease(orgId, projectId, env) {
   archivedFiles.push(`s3://${TRAINING_BUCKET}/${trainingPrefix}/metadata.json`);
 
   // Update DynamoDB to mark project as released
+  // Note: We set the entire stages.thermo_report object because it may not exist yet
   const projectsTable = `solar-projects-${env}`;
   const timestampEpoch = Math.floor(Date.now() / 1000);
   await dynamodb.update({
@@ -83,13 +125,17 @@ async function handleRelease(orgId, projectId, env) {
       PK: `PROJECT#${projectId}`,
       SK: 'METADATA'
     },
-    UpdateExpression: 'SET released_at = :released_at, is_released = :released',
+    UpdateExpression: 'SET released_at = :released_at, is_released = :released, stages.thermo_report = :thermo_report',
     ExpressionAttributeValues: {
       ':released_at': timestampEpoch,
-      ':released': true
+      ':released': true,
+      ':thermo_report': {
+        status: 'COMPLETED',
+        released_at: timestampEpoch
+      }
     }
   }).promise();
-  console.log('Updated DynamoDB with released_at:', timestampEpoch);
+  console.log('Updated DynamoDB with released_at and thermo_report.status:', timestampEpoch);
 
   return {
     success: true,
@@ -156,6 +202,22 @@ exports.handler = async (event) => {
 
     if (actionType === 'release') {
       const result = await handleRelease(orgId, projectId, env);
+
+      // Send email notification to user on release
+      const project = await getProjectDetails(projectId, env);
+      if (project && project.user_id) {
+        const userEmail = await getUserEmail(project.user_id);
+        if (userEmail) {
+          sendEmail(userEmail, 'projectReleased', {
+            projectId,
+            projectName: project.project_name || projectId,
+          }).catch(err => console.error('Release email notification failed', err));
+          console.log(`Sent project release email to ${userEmail}`);
+        } else {
+          console.log(`Could not find email for user ${project.user_id}, skipping release notification`);
+        }
+      }
+
       return jsonResponse(200, result);
     }
 

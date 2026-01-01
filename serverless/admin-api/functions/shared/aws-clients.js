@@ -7,6 +7,7 @@ const s3 = new AWS.S3({ signatureVersion: 'v4' });
 const cognito = new AWS.CognitoIdentityServiceProvider();
 const batch = new AWS.Batch();
 const dynamodb = new AWS.DynamoDB.DocumentClient();
+const sfn = new AWS.StepFunctions();
 
 module.exports = {
   AWS,
@@ -14,4 +15,5 @@ module.exports = {
   cognito,
   batch,
   dynamodb,
+  sfn,
 };

@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, FolderKanban, Settings, Sun } from 'lucide-react';
+import { Home, FolderKanban, Settings, Sun, Cpu } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: Home },
   { href: '/projects', label: 'Projects', icon: FolderKanban },
+  { href: '/model', label: 'AI Model', icon: Cpu },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -14,7 +15,7 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 bg-gray-900 text-white min-h-screen p-4">
+    <aside className="hidden md:block w-64 bg-gray-900 text-white min-h-screen p-4">
       <div className="flex items-center gap-2 mb-8">
         <Sun className="h-8 w-8 text-yellow-400" />
         <h1 className="text-xl font-bold">Solar Admin</h1>

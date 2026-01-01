@@ -25,8 +25,15 @@ Globals:
         INFERENCE_JOB_DEF_PROD: !Ref InferenceJobDefinitionProd
         REPORT_JOB_DEF_DEV: !Ref ReportJobDefinitionDev
         REPORT_JOB_DEF_PROD: !Ref ReportJobDefinitionProd
+        SENDER_EMAIL: !Ref SenderEmail
+        TRAINING_DATA_BUCKET: !Ref TrainingDataBucket
+        MODEL_REGISTRY_TABLE: !Ref ModelRegistryTable
+        MODEL_REGISTRY_PROD_POINTER_PK: !Ref ModelRegistryProdPointerPk
 
 Parameters:
+  SenderEmail:
+    Type: String
+    Default: noreply@aisol.cloud
   AwsRegion:
     Type: String
     Default: us-east-2
@@ -78,6 +85,30 @@ Parameters:
   ReportJobDefinitionProd:
     Type: String
     Default: solar-report-prod
+  TrainingDataBucket:
+    Type: String
+    Default: solar-ai-training
+  ModelRegistryTable:
+    Type: String
+    Default: solar-model-registry-prod
+  ModelRegistryProdPointerPk:
+    Type: String
+    Default: MODEL#PROD_POINTER
+  RetrainJobQueue:
+    Type: String
+    Default: solar-gpu-queue-v2
+  RetrainJobDefinition:
+    Type: String
+    Default: solar-detectron2-training-gpu:1
+  CocoJobQueue:
+    Type: String
+    Default: solar-gpu-queue-v2
+  CocoJobDefinition:
+    Type: String
+    Default: solar-detectron2-training-gpu:1
+  ProdModelPrefix:
+    Type: String
+    Default: model-registry
 
 Resources:
   AdminHttpApi:
@@ -94,6 +125,7 @@ Resources:
           - GET
           - POST
           - PUT
+          - DELETE
           - OPTIONS
 
   ProjectsFunction:
@@ -122,6 +154,12 @@ Resources:
               Action:
                 - cognito-idp:ListUsers
               Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
       Events:
         Api:
           Type: HttpApi
@@ -278,10 +316,19 @@ Resources:
                 - arn:aws:s3:::solar-ai-training/*
             - Effect: Allow
               Action:
+                - dynamodb:GetItem
                 - dynamodb:UpdateItem
               Resource:
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+              Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: '*'
       Events:
         Api:
           Type: HttpApi
@@ -301,6 +348,282 @@ Resources:
           Properties:
             ApiId: !Ref AdminHttpApi
             Path: /projects/{orgId}/{projectId}/align-panels
+            Method: POST
+
+  CreateProjectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: create-project/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+              Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: '*'
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/create
+            Method: POST
+
+  UploadPresignFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: upload-presign/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - arn:aws:s3:::solar-uploads-dev/*
+                - arn:aws:s3:::solar-uploads-prod/*
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/presign-upload
+            Method: POST
+
+  UploadCompleteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: upload-complete/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:HeadObject
+              Resource:
+                - arn:aws:s3:::solar-uploads-dev/*
+                - arn:aws:s3:::solar-uploads-prod/*
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/files/{fileId}/complete
+            Method: POST
+
+  FinalizeUploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: finalize-upload/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/finalize-upload
+            Method: POST
+
+  StartOdmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: start-odm/index.handler
+      Timeout: 60
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+                - states:ListExecutions
+              Resource:
+                - arn:aws:states:us-east-2:002938753233:stateMachine:solar-processing-dev
+                - arn:aws:states:us-east-2:002938753233:stateMachine:solar-processing-prod
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - arn:aws:s3:::solar-uploads-dev/*
+                - arn:aws:s3:::solar-uploads-prod/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/start-odm
+            Method: POST
+
+  S3PresignFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: s3-presign/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${ReportsBucketDev}/*
+                - !Sub arn:aws:s3:::${ReportsBucketProd}/*
+                - arn:aws:s3:::solar-uploads-dev/*
+                - arn:aws:s3:::solar-uploads-prod/*
+                - !Sub arn:aws:s3:::${OrthosBucketDev}/*
+                - !Sub arn:aws:s3:::${OrthosBucketProd}/*
+                - !Sub arn:aws:s3:::${GroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${GroundtruthBucketProd}/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /s3/presigned-url
+            Method: GET
+
+  ModelRegistryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: model-registry/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource: !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ModelRegistryTable}
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${TrainingDataBucket}
+                - !Sub arn:aws:s3:::${TrainingDataBucket}/*
+            - Effect: Allow
+              Action:
+                - batch:SubmitJob
+              Resource:
+                - !Sub arn:aws:batch:${AwsRegion}:${AWS::AccountId}:job-queue/${RetrainJobQueue}
+                - !Sub arn:aws:batch:${AwsRegion}:${AWS::AccountId}:job-definition/${RetrainJobDefinition}
+                - !Sub arn:aws:batch:${AwsRegion}:${AWS::AccountId}:job-queue/${CocoJobQueue}
+                - !Sub arn:aws:batch:${AwsRegion}:${AWS::AccountId}:job-definition/${CocoJobDefinition}
+      Environment:
+        Variables:
+          TRAINING_DATA_BUCKET: !Ref TrainingDataBucket
+          MODEL_REGISTRY_TABLE: !Ref ModelRegistryTable
+          MODEL_REGISTRY_PROD_POINTER_PK: !Ref ModelRegistryProdPointerPk
+          RETRAIN_JOB_QUEUE: !Ref RetrainJobQueue
+          RETRAIN_JOB_DEFINITION: !Ref RetrainJobDefinition
+          COCO_JOB_QUEUE: !Ref CocoJobQueue
+          COCO_JOB_DEFINITION: !Ref CocoJobDefinition
+          OUTPUT_BUCKET: !Ref TrainingDataBucket
+          PROD_MODEL_PREFIX: !Ref ProdModelPrefix
+          DATASET_UPLOAD_PREFIX: !Sub s3://${TrainingDataBucket}/datasets
+      Events:
+        ListModels:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/model-registry
+            Method: GET
+        Retrain:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/model-registry/retrain
+            Method: POST
+        Promote:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/model-registry/{modelVersion}/promote
+            Method: POST
+        DeleteModel:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/model-registry/{modelVersion}
+            Method: DELETE
+        LaunchRetrain:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/model-registry/{modelVersion}/launch
+            Method: POST
+        TrainingArchives:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/training-data/archives
+            Method: GET
+        TrainingManifest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/training-data/manifests
+            Method: POST
+        BuildCoco:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/training-data/coco
+            Method: POST
+        CocoStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/training-data/coco/status
+            Method: POST
+        PrepareRetrain:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/model-registry/prepare
             Method: POST
 
 Outputs:

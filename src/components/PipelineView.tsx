@@ -17,7 +17,7 @@ import {
   Edit3,
   Eye,
   ExternalLink,
-  Map,
+  Thermometer,
 } from 'lucide-react';
 import { buildApiUrl } from '@/lib/api-client';
 
@@ -75,6 +75,8 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       icon: ImageIcon,
       description: 'Orthophoto generated',
       complete: status?.hasOrthophoto || false,
+      actionLabel: status?.hasOrthophoto ? undefined : 'Gerar Relatório',
+      actionType: status?.hasOrthophoto ? undefined : 'start-odm',
     },
     {
       id: 'crop',
@@ -120,8 +122,8 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       complete: status?.hasReport || false, // Same as generate - complete when report exists
       actionLabel: 'View PDF',
       externalUrl: status?.reportFullUrl || undefined,
-      defectMapHref: status?.hasReport
-        ? `/defect-map?orgId=${orgId}&projectId=${projectId}&env=${env}`
+      thermalReviewHref: status?.hasReport
+        ? `/annotate/thermal?orgId=${orgId}&projectId=${projectId}&env=${env}`
         : undefined,
     },
     {
@@ -138,7 +140,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
   const handleAction = async (actionType: string) => {
     setActionLoading(actionType);
     try {
-      // Handle run-inference action with the new endpoint
+      // Handle run-inference action with dedicated endpoint
       if (actionType === 'run-inference') {
         const response = await fetch(
           buildApiUrl(`/projects/${orgId}/${projectId}/run-inference?env=${env}`),
@@ -148,6 +150,24 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
         const data = await response.json();
         console.log('Inference job submitted:', data.jobId);
         alert(`Inference job submitted successfully!\nJob ID: ${data.jobId}`);
+      } else if (actionType === 'start-odm') {
+        // Handle ODM processing with dedicated endpoint
+        const response = await fetch(
+          buildApiUrl(`/projects/${orgId}/${projectId}/start-odm?env=${env}`),
+          { method: 'POST' }
+        );
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || errorData.message || 'Failed to start ODM processing');
+        }
+        const data = await response.json();
+        console.log('ODM processing started:', data);
+
+        if (data.status === 'already_processing') {
+          alert(`Project already processing!\n\nExecution: ${data.executionArn?.split(':').pop() || 'unknown'}`);
+        } else {
+          alert(`ODM processing started successfully!\n\nFiles: ${data.fileCount}\nSize: ${data.totalSizeMb} MB\nInstance: ${data.instanceType}`);
+        }
       } else {
         // Generic action handler for other action types
         const response = await fetch(
@@ -269,13 +289,13 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
                     {stage.actionLabel}
                   </a>
                 )}
-                {stage.defectMapHref && (
+                {stage.thermalReviewHref && (
                   <Link
-                    href={stage.defectMapHref}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    href={stage.thermalReviewHref}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
                   >
-                    <Map className="h-4 w-4" />
-                    Defect Map
+                    <Thermometer className="h-4 w-4" />
+                    Thermal Review
                   </Link>
                 )}
                 {stage.actionType && (

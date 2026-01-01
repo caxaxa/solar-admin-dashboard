@@ -1,0 +1,741 @@
+const AWS = require('aws-sdk');
+const { ulid } = require('ulid');
+
+const ddb = new AWS.DynamoDB.DocumentClient();
+const s3 = new AWS.S3();
+const batch = new AWS.Batch();
+
+const TRAINING_DATA_BUCKET = process.env.TRAINING_DATA_BUCKET || 'solar-ai-training';
+const MODEL_REGISTRY_TABLE = process.env.MODEL_REGISTRY_TABLE || 'solar-model-registry-prod';
+const PROD_POINTER_PK = process.env.MODEL_REGISTRY_PROD_POINTER_PK || 'MODEL#PROD_POINTER';
+const RETRAIN_JOB_QUEUE = process.env.RETRAIN_JOB_QUEUE || 'solar-job-queue-prod';
+const RETRAIN_JOB_DEFINITION =
+  process.env.RETRAIN_JOB_DEFINITION || 'solar-detectron2-training-gpu:1';
+const COCO_JOB_QUEUE = process.env.COCO_JOB_QUEUE || RETRAIN_JOB_QUEUE;
+const COCO_JOB_DEFINITION = process.env.COCO_JOB_DEFINITION || RETRAIN_JOB_DEFINITION;
+const OUTPUT_BUCKET = process.env.OUTPUT_BUCKET || TRAINING_DATA_BUCKET;
+const DATASET_UPLOAD_PREFIX =
+  process.env.DATASET_UPLOAD_PREFIX || `s3://${TRAINING_DATA_BUCKET}/datasets`;
+const DEFAULT_BATCH_SIZE = parseInt(process.env.RETRAIN_BATCH_SIZE || '2', 10);
+const DEFAULT_CHECKPOINT_EPOCHS = parseInt(process.env.RETRAIN_CHECKPOINT_EPOCHS || '20', 10);
+const DEFAULT_EVAL_EPOCHS = parseInt(process.env.RETRAIN_EVAL_EPOCHS || '6', 10);
+const PROD_MODEL_PREFIX = process.env.PROD_MODEL_PREFIX || 'model-registry';
+
+const baseHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': '*',
+  'Access-Control-Allow-Methods': '*',
+  'Access-Control-Expose-Headers': 'X-Request-ID',
+};
+
+const ok = (statusCode, body) => ({
+  statusCode,
+  headers: baseHeaders,
+  body: JSON.stringify(body),
+});
+
+exports.handler = async (event) => {
+  try {
+    if (event.requestContext?.http?.method === 'OPTIONS') {
+      return ok(200, { status: 'ok' });
+    }
+
+    const path = event.requestContext?.http?.path || '';
+    const method = event.requestContext?.http?.method || 'GET';
+
+    if (path === '/api/model-registry' && method === 'GET') {
+      return await listModels();
+    }
+
+    if (path === '/api/training-data/archives' && method === 'GET') {
+      return await listArchives();
+    }
+
+    if (path === '/api/training-data/manifests' && method === 'POST') {
+      return await createManifest();
+    }
+
+  if (path === '/api/training-data/coco' && method === 'POST') {
+    const body = safeParse(event.body);
+    return await buildCocoArchive(body || {});
+  }
+
+  if (path === '/api/training-data/coco/status' && method === 'POST') {
+    const body = safeParse(event.body);
+    return await checkDatasetReady(body || {});
+  }
+
+  if (path === '/api/model-registry/prepare' && method === 'POST') {
+    const body = safeParse(event.body);
+    return await prepareRetrain(body || {});
+  }
+
+  if (path === '/api/model-registry/retrain' && method === 'POST') {
+    const body = safeParse(event.body);
+    return await triggerRetrain(body || {});
+  }
+
+    const launchMatch = path.match(/^\/api\/model-registry\/([^/]+)\/launch$/);
+    if (launchMatch && method === 'POST') {
+      const modelVersion = decodeURIComponent(launchMatch[1]);
+      const body = safeParse(event.body);
+      return await launchRetrainJob(modelVersion, body || {});
+    }
+
+    const deleteMatch = path.match(/^\/api\/model-registry\/([^/]+)$/);
+    if (deleteMatch && method === 'DELETE') {
+      const modelVersion = decodeURIComponent(deleteMatch[1]);
+      return await deleteModel(modelVersion);
+    }
+
+    const promoteMatch = path.match(/^\/api\/model-registry\/([^/]+)\/promote$/);
+    if (promoteMatch && method === 'POST') {
+      const modelVersion = decodeURIComponent(promoteMatch[1]);
+      const body = safeParse(event.body);
+      return await promoteModel(modelVersion, body || {});
+    }
+
+    return ok(404, { error: 'Not found' });
+  } catch (err) {
+    console.error('Model registry handler error', err);
+    return ok(500, { error: 'Internal server error', detail: err.message });
+  }
+};
+
+function safeParse(payload) {
+  try {
+    return payload ? JSON.parse(payload) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+async function checkDatasetReady(body) {
+  const datasetUri = body.dataset_uri || body.dataset_upload_uri;
+  if (!datasetUri) {
+    return ok(400, { error: 'dataset_uri is required' });
+  }
+
+  const parsed = parseS3Uri(datasetUri);
+  if (!parsed) {
+    return ok(400, { error: 'dataset_uri must be an s3:// URI' });
+  }
+
+  try {
+    await s3
+      .headObject({
+        Bucket: parsed.bucket,
+        Key: parsed.key,
+      })
+      .promise();
+    return ok(200, { dataset_uri: datasetUri, exists: true });
+  } catch (e) {
+    if (e.code === 'NotFound' || e.statusCode === 404) {
+      return ok(200, { dataset_uri: datasetUri, exists: false });
+    }
+    console.error('checkDatasetReady error', e);
+    return ok(500, { error: 'Failed to check dataset', detail: e.message });
+  }
+}
+
+async function getProdPointer() {
+  const resp = await ddb
+    .get({
+      TableName: MODEL_REGISTRY_TABLE,
+      Key: { model_version: PROD_POINTER_PK },
+    })
+    .promise();
+  return resp.Item ? resp.Item.current_production : null;
+}
+
+async function listModels() {
+  const pointer = await getProdPointer();
+  const resp = await ddb
+    .scan({
+      TableName: MODEL_REGISTRY_TABLE,
+      Limit: 200,
+    })
+    .promise();
+
+  const items = (resp.Items || []).filter(
+    (item) => item.model_version && item.model_version !== PROD_POINTER_PK
+  );
+
+  items.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+
+  return ok(200, {
+    models: items,
+    production_model: pointer,
+  });
+}
+
+async function listArchives() {
+  const metadataKeys = await listAllMetadataKeys();
+
+  const archives = [];
+  const seen = new Set();
+
+  for (const key of metadataKeys) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const parts = key.split('/').filter(Boolean);
+    if (parts[0] === 'models' || parts[0] === 'detectron2-solar-models') continue;
+    if (key.endsWith('training_metadata.json')) continue;
+
+    let userId = null;
+    let projectId = null;
+    let date = null;
+    const basePrefix = key.slice(0, key.lastIndexOf('/') + 1);
+
+    if (parts[0] === 'training-data') {
+      // Legacy/explicit training-data/{date}/{project}/metadata.json
+      if (parts.length >= 3) {
+        date = parts[1];
+        projectId = parts[2];
+      }
+    } else {
+      // Current upload layout: {userId}/{projectId}/[optional date]/metadata.json
+      if (parts.length >= 2) {
+        userId = parts[0];
+        projectId = parts[1];
+      }
+      if (parts.length >= 3 && parts[2] !== 'metadata.json') {
+        date = parts[2];
+      }
+    }
+
+    const archivedFiles = await listFilesInPrefix(basePrefix, key);
+
+    const archive = {
+      user_id: userId,
+      project_id: projectId,
+      date,
+      metadata_uri: `s3://${TRAINING_DATA_BUCKET}/${key}`,
+      archived_files: archivedFiles,
+      source_key: key,
+    };
+
+    archives.push(archive);
+  }
+
+  // Deduplicate by (user, project); prefer entries with explicit dates
+  const deduped = new Map();
+  for (const a of archives) {
+    const k = `${a.user_id || 'na'}|${a.project_id || a.source_key}`;
+    if (!deduped.has(k)) {
+      deduped.set(k, a);
+      continue;
+    }
+    const existing = deduped.get(k);
+    const existingHasDate = Boolean(existing.date);
+    const candidateHasDate = Boolean(a.date);
+    if (candidateHasDate && !existingHasDate) {
+      deduped.set(k, a);
+    } else if (candidateHasDate && existingHasDate) {
+      // Keep the one with lexicographically newer date
+      if ((a.date || '') > (existing.date || '')) {
+        deduped.set(k, a);
+      }
+    }
+  }
+
+  const archiveList = Array.from(deduped.values());
+
+  archiveList.sort((a, b) => {
+    const da = a.date || '';
+    const db = b.date || '';
+    if (da === db) return (b.project_id || '').localeCompare(a.project_id || '');
+    return db.localeCompare(da);
+  });
+
+  return ok(200, {
+    archives: archiveList,
+    count: archiveList.length,
+    training_bucket: TRAINING_DATA_BUCKET,
+  });
+}
+
+async function createManifest() {
+  const archivesResp = await listArchives();
+  const archivesBody = safeParse(archivesResp.body);
+  const archives = archivesBody.archives || [];
+
+  const manifest = {
+    generated_at: new Date().toISOString(),
+    archive_count: archives.length,
+    archives,
+  };
+
+  const timestamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0];
+  const key = `training-data/manifests/manifest-${timestamp}.json`;
+
+  await s3
+    .putObject({
+      Bucket: TRAINING_DATA_BUCKET,
+      Key: key,
+      Body: JSON.stringify(manifest, null, 2),
+      ContentType: 'application/json',
+    })
+    .promise();
+
+  manifest.manifest_uri = `s3://${TRAINING_DATA_BUCKET}/${key}`;
+  manifest.manifest_key = key;
+
+  return ok(200, manifest);
+}
+
+async function triggerRetrain(body) {
+  const modelVersion = `model-${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}-${ulid().slice(0, 6)}`;
+  const now = Math.floor(Date.now() / 1000);
+
+  const item = {
+    model_version: modelVersion,
+    created_at: now,
+    created_by: body.triggered_by || 'admin',
+    manifest_uri: body.manifest_uri,
+    base_model_version: body.base_model_version,
+    training_params: body.training_params || {},
+    notes: body.notes || '',
+    status: 'queued',
+  };
+
+  await ddb
+    .put({
+      TableName: MODEL_REGISTRY_TABLE,
+      Item: item,
+    })
+    .promise();
+
+  return ok(200, {
+    model_version: modelVersion,
+    status: 'queued',
+    message: 'Retrain request recorded',
+    manifest_uri: body.manifest_uri,
+    training_params: body.training_params || {},
+  });
+}
+
+async function launchRetrainJob(modelVersion, body) {
+  // Always fine-tune from the current production model unless explicitly overridden.
+  const prodPointer = await getProdPointer();
+
+  const getResp = await ddb
+    .get({ TableName: MODEL_REGISTRY_TABLE, Key: { model_version: modelVersion } })
+    .promise();
+  const existing = getResp.Item;
+
+  if (!existing) {
+    return ok(404, { error: 'Model not found' });
+  }
+
+  const datasetArchiveUri =
+    body.dataset_archive_uri ||
+    existing.training_params?.dataset_archive_uri ||
+    `${DATASET_UPLOAD_PREFIX}/detectron2-coco-${modelVersion}.tar.gz`;
+  const manifestUri = body.manifest_uri || existing.manifest_uri;
+  const epochs = parseInt(body.epochs || existing.training_params?.epochs || '0', 10);
+  const batchSize = parseInt(
+    body.batch_size || existing.training_params?.batch_size || DEFAULT_BATCH_SIZE,
+    10
+  );
+  const baseModelVersion =
+    body.base_model_version || existing.base_model_version || prodPointer || null;
+  if (!baseModelVersion) {
+    return ok(400, { error: 'No production model set. Provide base_model_version or set prod pointer.' });
+  }
+  const maxIter = parseInt(
+    body.max_iter || existing.training_params?.max_iter || computeMaxIter(epochs),
+    10
+  );
+  const outputPrefixUri =
+    body.output_prefix_uri || `s3://${OUTPUT_BUCKET}/model-registry/${modelVersion}`;
+  const baseWeightsUri =
+    body.base_weights_uri ||
+    (baseModelVersion
+      ? `s3://${OUTPUT_BUCKET}/${PROD_MODEL_PREFIX}/${baseModelVersion}/model_final.pth`
+      : null);
+  const datasetUploadUri = datasetArchiveUri;
+
+  if (!datasetArchiveUri && !manifestUri) {
+    return ok(400, { error: 'Provide a manifest_uri when dataset_archive_uri is omitted' });
+  }
+  if (!manifestUri && !existing.manifest_uri) {
+    return ok(400, { error: 'manifest_uri missing; retrain record must include manifest' });
+  }
+
+  // Ensure required artifacts exist before we consume GPU
+  if (datasetArchiveUri) {
+    const parsed = parseS3Uri(datasetArchiveUri);
+    if (!parsed) {
+      return ok(400, { error: 'dataset_archive_uri must be an s3:// URI' });
+    }
+    try {
+      await s3
+        .headObject({
+          Bucket: parsed.bucket,
+          Key: parsed.key,
+        })
+        .promise();
+    } catch (e) {
+      return ok(400, {
+        error:
+          'Dataset archive not found yet. Let the COCO build finish before launching training.',
+        dataset_archive_uri: datasetArchiveUri,
+      });
+    }
+  }
+
+  if (manifestUri) {
+    const parsed = parseS3Uri(manifestUri);
+    if (parsed) {
+      try {
+        await s3
+          .headObject({
+            Bucket: parsed.bucket,
+            Key: parsed.key,
+          })
+          .promise();
+      } catch (e) {
+        return ok(400, { error: 'Manifest not found', manifest_uri: manifestUri });
+      }
+    }
+  }
+
+  const jobName = truncateJobName(`retrain-${modelVersion}`);
+
+  const command = [
+    '--output-prefix-uri',
+    outputPrefixUri,
+    '--batch-size',
+    String(batchSize),
+    '--max-iter',
+    String(maxIter),
+    '--checkpoint-epochs',
+    String(DEFAULT_CHECKPOINT_EPOCHS),
+    '--eval-epochs',
+    String(DEFAULT_EVAL_EPOCHS),
+    '--dataloader-workers',
+    '2',
+  ];
+
+  if (datasetArchiveUri) {
+    command.unshift('--dataset-archive-uri', datasetArchiveUri);
+  } else {
+    command.unshift('--manifest-uri', manifestUri, '--dataset-upload-uri', datasetUploadUri);
+  }
+
+  const submit = await batch
+    .submitJob({
+      jobName,
+      jobQueue: RETRAIN_JOB_QUEUE,
+      jobDefinition: RETRAIN_JOB_DEFINITION,
+      containerOverrides: {
+        // The training image already sets the entrypoint to batch_train.py.
+        // Only pass arguments here.
+        command,
+        environment: [
+          { name: 'MANIFEST_URI', value: manifestUri },
+          { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
+          { name: 'DATASET_UPLOAD_URI', value: datasetUploadUri },
+          { name: 'RUN_NAME', value: modelVersion },
+          ...(baseWeightsUri ? [{ name: 'BASE_WEIGHTS_URI', value: baseWeightsUri }] : []),
+        ],
+      },
+    })
+    .promise();
+
+  const now = Math.floor(Date.now() / 1000);
+  await ddb
+    .update({
+      TableName: MODEL_REGISTRY_TABLE,
+      Key: { model_version: modelVersion },
+      UpdateExpression:
+        'SET #status = :status, batch_job_id = :jobId, batch_job_name = :jobName, training_params = :tp, manifest_uri = :manifest, updated_at = :now',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+      },
+      ExpressionAttributeValues: {
+        ':status': 'submitted',
+        ':jobId': submit.jobId,
+        ':jobName': submit.jobName,
+        ':tp': {
+          ...(existing.training_params || {}),
+          epochs: epochs || existing.training_params?.epochs || null,
+          batch_size: batchSize,
+          max_iter: maxIter,
+          base_model_version: baseModelVersion || existing.base_model_version || null,
+          base_weights_uri: baseWeightsUri || existing.training_params?.base_weights_uri || null,
+          dataset_archive_uri:
+            datasetArchiveUri || existing.training_params?.dataset_archive_uri || datasetUploadUri,
+        },
+        ':manifest': manifestUri,
+        ':now': now,
+      },
+    })
+    .promise();
+
+  return ok(200, {
+    model_version: modelVersion,
+    status: 'submitted',
+    batch_job_id: submit.jobId,
+    batch_job_name: submit.jobName,
+    manifest_uri: manifestUri,
+    max_iter: maxIter,
+    epochs: epochs || null,
+  });
+}
+
+function parseS3Uri(uri) {
+  if (!uri || !uri.startsWith('s3://')) return null;
+  const without = uri.replace('s3://', '');
+  const firstSlash = without.indexOf('/');
+  if (firstSlash === -1) return null;
+  return { bucket: without.slice(0, firstSlash), key: without.slice(firstSlash + 1) };
+}
+
+async function listAllMetadataKeys() {
+  let continuationToken;
+  const keys = [];
+
+  do {
+    const resp = await s3
+      .listObjectsV2({
+        Bucket: TRAINING_DATA_BUCKET,
+        ContinuationToken: continuationToken,
+      })
+      .promise();
+
+    for (const obj of resp.Contents || []) {
+      if (obj.Key && obj.Key.endsWith('metadata.json')) {
+        keys.push(obj.Key);
+      }
+    }
+
+    continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return keys;
+}
+
+function computeMaxIter(epochs) {
+  const e = parseInt(epochs || '0', 10);
+  if (!e || Number.isNaN(e)) return 39050; // default ~100 epochs baseline
+  // Original run: 781 train images, batch=2 => ~390 iters per epoch.
+  return Math.max(500, Math.round(e * 390));
+}
+
+function truncateJobName(name) {
+  if (name.length <= 118) return name;
+  return name.slice(0, 118);
+}
+
+async function buildCocoArchive(body) {
+  const manifestUri = body.manifest_uri;
+  if (!manifestUri) {
+    return ok(400, { error: 'manifest_uri is required to build a COCO archive' });
+  }
+
+  const targetUri =
+    body.dataset_upload_uri ||
+    `${DATASET_UPLOAD_PREFIX}/detectron2-coco-${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}.tar.gz`;
+
+  const jobName = truncateJobName(`coco-build-${ulid().slice(0, 6)}`);
+
+  const submit = await batch
+    .submitJob({
+      jobName,
+      jobQueue: COCO_JOB_QUEUE,
+      jobDefinition: COCO_JOB_DEFINITION,
+      containerOverrides: {
+        command: [
+          '--manifest-uri',
+          manifestUri,
+          '--dataset-upload-uri',
+          targetUri,
+          '--build-only',
+          '--checkpoint-epochs',
+          String(DEFAULT_CHECKPOINT_EPOCHS),
+          '--eval-epochs',
+          String(DEFAULT_EVAL_EPOCHS),
+          '--dataloader-workers',
+          '2',
+        ],
+        environment: [
+          { name: 'MANIFEST_URI', value: manifestUri },
+          { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
+          { name: 'DATASET_UPLOAD_URI', value: targetUri },
+          // Ensure training entrypoint does not fall back to a baked-in dataset/archive
+          { name: 'DATASET_ARCHIVE_URI', value: '' },
+          { name: 'BASE_WEIGHTS_URI', value: '' },
+        ],
+      },
+    })
+    .promise();
+
+  return ok(200, {
+    message: 'COCO build job submitted',
+    dataset_upload_uri: targetUri,
+    batch_job_id: submit.jobId,
+    batch_job_name: submit.jobName,
+  });
+}
+
+async function prepareRetrain(body) {
+  // 1) Generate manifest from archives
+  const manifestResp = await createManifest();
+  const manifest = safeParse(manifestResp.body);
+  const manifestUri = manifest.manifest_uri;
+
+  // 2) Queue coco build (build-only) on dedicated queue/definition
+  const modelVersion = `model-${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}-${ulid().slice(0, 6)}`;
+  const datasetUploadUri =
+    `${DATASET_UPLOAD_PREFIX}/detectron2-coco-${modelVersion}.tar.gz`;
+
+  const cocoJob = await batch
+    .submitJob({
+      jobName: truncateJobName(`coco-${modelVersion}`),
+      jobQueue: COCO_JOB_QUEUE,
+      jobDefinition: COCO_JOB_DEFINITION,
+      containerOverrides: {
+        command: [
+          '--manifest-uri',
+          manifestUri,
+          '--dataset-upload-uri',
+          datasetUploadUri,
+          '--build-only',
+          '--checkpoint-epochs',
+          String(DEFAULT_CHECKPOINT_EPOCHS),
+          '--eval-epochs',
+          String(DEFAULT_EVAL_EPOCHS),
+          '--dataloader-workers',
+          '2',
+        ],
+        environment: [
+          { name: 'MANIFEST_URI', value: manifestUri },
+          { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
+          { name: 'DATASET_UPLOAD_URI', value: datasetUploadUri },
+          { name: 'RUN_NAME', value: modelVersion },
+          { name: 'DATASET_ARCHIVE_URI', value: '' },
+          { name: 'BASE_WEIGHTS_URI', value: '' },
+        ],
+      },
+    })
+    .promise();
+
+  // 3) Create registry entry (status=queued, store manifest + dataset uri + params)
+  const now = Math.floor(Date.now() / 1000);
+  const epochs = parseInt(body.epochs || '0', 10);
+  const batchSize = parseInt(body.batch_size || DEFAULT_BATCH_SIZE, 10);
+
+  const item = {
+    model_version: modelVersion,
+    created_at: now,
+    created_by: body.triggered_by || 'admin',
+    manifest_uri: manifestUri,
+    base_model_version: body.base_model_version,
+    training_params: {
+      epochs: epochs || null,
+      batch_size: batchSize,
+      dataset_archive_uri: datasetUploadUri,
+    },
+    notes: body.notes || '',
+    status: 'queued',
+    coco_job_id: cocoJob.jobId,
+    coco_job_name: cocoJob.jobName,
+  };
+
+  await ddb
+    .put({
+      TableName: MODEL_REGISTRY_TABLE,
+      Item: item,
+    })
+    .promise();
+
+  return ok(200, {
+    message: 'Prepare step submitted: manifest created, COCO build queued, registry entry created.',
+    model_version: modelVersion,
+    manifest_uri: manifestUri,
+    dataset_archive_uri: datasetUploadUri,
+    coco_job_id: cocoJob.jobId,
+    coco_job_name: cocoJob.jobName,
+  });
+}
+
+async function listFilesInPrefix(prefix, metadataKey) {
+  let continuationToken;
+  const files = [];
+
+  do {
+    const resp = await s3
+      .listObjectsV2({
+        Bucket: TRAINING_DATA_BUCKET,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+      .promise();
+
+    for (const obj of resp.Contents || []) {
+      if (!obj.Key || obj.Key === metadataKey) continue;
+      files.push(`s3://${TRAINING_DATA_BUCKET}/${obj.Key}`);
+    }
+
+    continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return files;
+}
+
+async function promoteModel(modelVersion, body) {
+  const now = Math.floor(Date.now() / 1000);
+
+  // Update pointer
+  await ddb
+    .put({
+      TableName: MODEL_REGISTRY_TABLE,
+      Item: {
+        model_version: PROD_POINTER_PK,
+        current_production: modelVersion,
+        updated_at: now,
+        promoted_by: body?.promoted_by || 'admin',
+      },
+    })
+    .promise();
+
+  // Mark model as production
+  await ddb
+    .update({
+      TableName: MODEL_REGISTRY_TABLE,
+      Key: { model_version: modelVersion },
+      UpdateExpression:
+        'SET is_production = :true, status = :status, promoted_at = :ts, promoted_by = :by',
+      ExpressionAttributeValues: {
+        ':true': true,
+        ':status': 'production',
+        ':ts': now,
+        ':by': body?.promoted_by || 'admin',
+      },
+    })
+    .promise();
+
+  return ok(200, {
+    model_version: modelVersion,
+    status: 'production',
+    message: 'Model promoted',
+  });
+}
+
+async function deleteModel(modelVersion) {
+  if (!modelVersion || modelVersion === PROD_POINTER_PK) {
+    return ok(400, { error: 'Invalid model version' });
+  }
+
+  await ddb
+    .delete({
+      TableName: MODEL_REGISTRY_TABLE,
+      Key: { model_version: modelVersion },
+    })
+    .promise();
+
+  return ok(200, { message: 'Model deleted', model_version: modelVersion });
+}

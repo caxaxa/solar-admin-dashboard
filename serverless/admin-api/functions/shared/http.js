@@ -29,9 +29,24 @@ function errorResponse(statusCode, message, details) {
   });
 }
 
+function ok(body) {
+  return jsonResponse(200, body);
+}
+
+function badRequest(message, details) {
+  return errorResponse(400, message, details);
+}
+
+function serverError(message, details) {
+  return errorResponse(500, message || 'Internal server error', details);
+}
+
 module.exports = {
   jsonResponse,
   errorResponse,
   preflightResponse,
   defaultHeaders,
+  ok,
+  badRequest,
+  serverError,
 };
