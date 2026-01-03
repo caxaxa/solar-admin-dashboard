@@ -45,6 +45,92 @@ async function getProjectDetails(projectId, env) {
   return result.Item;
 }
 
+/**
+ * Delete a pending project (removes from DynamoDB and S3 uploads)
+ */
+async function handleDelete(orgId, projectId, env) {
+  const projectsTable = `solar-projects-${env}`;
+  const uploadsBucket = `solar-uploads-${env}`;
+
+  // Get project details first
+  const project = await getProjectDetails(projectId, env);
+  if (!project) {
+    throw new Error('Project not found');
+  }
+
+  // Only allow deletion of pending projects (not yet processed)
+  const allowedStatuses = ['creating', 'uploading', 'validating'];
+  if (!allowedStatuses.includes(project.status)) {
+    throw new Error(`Cannot delete project with status '${project.status}'. Only pending projects can be deleted.`);
+  }
+
+  // Delete S3 uploads
+  const prefix = `${orgId}/projects/${projectId}/`;
+  let deletedFiles = 0;
+  try {
+    let continuationToken;
+    do {
+      const listParams = {
+        Bucket: uploadsBucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      };
+      const listResponse = await s3.listObjectsV2(listParams).promise();
+
+      if (listResponse.Contents && listResponse.Contents.length > 0) {
+        const deleteParams = {
+          Bucket: uploadsBucket,
+          Delete: {
+            Objects: listResponse.Contents.map((obj) => ({ Key: obj.Key })),
+          },
+        };
+        await s3.deleteObjects(deleteParams).promise();
+        deletedFiles += listResponse.Contents.length;
+      }
+
+      continuationToken = listResponse.IsTruncated ? listResponse.NextContinuationToken : null;
+    } while (continuationToken);
+  } catch (err) {
+    console.error('Failed to delete S3 files:', err);
+    // Continue with DynamoDB deletion even if S3 fails
+  }
+
+  // Delete DynamoDB records
+  const queryParams = {
+    TableName: projectsTable,
+    KeyConditionExpression: 'PK = :pk',
+    ExpressionAttributeValues: { ':pk': `PROJECT#${projectId}` },
+  };
+
+  let deletedRecords = 0;
+  let lastEvaluatedKey;
+  do {
+    if (lastEvaluatedKey) {
+      queryParams.ExclusiveStartKey = lastEvaluatedKey;
+    }
+    const queryResponse = await dynamodb.query(queryParams).promise();
+
+    for (const item of queryResponse.Items || []) {
+      await dynamodb.delete({
+        TableName: projectsTable,
+        Key: { PK: item.PK, SK: item.SK },
+      }).promise();
+      deletedRecords++;
+    }
+
+    lastEvaluatedKey = queryResponse.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  console.log(`Deleted project ${projectId}: ${deletedFiles} files, ${deletedRecords} DB records`);
+
+  return {
+    success: true,
+    message: 'Project deleted successfully',
+    deletedFiles,
+    deletedRecords,
+  };
+}
+
 async function handleRelease(orgId, projectId, env) {
   const orthosBucket = `solar-orthos-${env}`;
   const groundtruthBucket = `solar-groundtruth-${env}`;
@@ -178,6 +264,16 @@ exports.handler = async (event) => {
         return errorResponse(500, 'Report job configuration missing');
       }
 
+      // Get project details for report metadata
+      const project = await getProjectDetails(projectId, env);
+      const projectName = project?.project_name || 'Solar Farm';
+
+      // Get user email for client name in report
+      let userEmail = '';
+      if (project?.user_id) {
+        userEmail = await getUserEmail(project.user_id) || '';
+      }
+
       const response = await batch
         .submitJob({
           jobName: `report-${projectId}-${Date.now()}`,
@@ -185,9 +281,11 @@ exports.handler = async (event) => {
           jobDefinition: reportJobDefinition,
           containerOverrides: {
             environment: [
-              { name: 'ORG_ID', value: orgId },
-              { name: 'PROJECT_ID', value: projectId },
+              { name: 'SOLAR_USER_ID', value: orgId },
+              { name: 'SOLAR_PROJECT_ID', value: projectId },
               { name: 'ENVIRONMENT', value: env },
+              { name: 'SOLAR_AREA_NAME', value: projectName },
+              { name: 'SOLAR_CLIENT_NAME', value: userEmail },
             ],
           },
         })
@@ -221,9 +319,14 @@ exports.handler = async (event) => {
       return jsonResponse(200, result);
     }
 
+    if (actionType === 'delete') {
+      const result = await handleDelete(orgId, projectId, env);
+      return jsonResponse(200, result);
+    }
+
     return errorResponse(400, `Unknown action type: ${actionType}`);
   } catch (error) {
     console.error('Failed to execute project action', error);
-    return errorResponse(500, 'Failed to execute action');
+    return errorResponse(500, error.message || 'Failed to execute action');
   }
 };

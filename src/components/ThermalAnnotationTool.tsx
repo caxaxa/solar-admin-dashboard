@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -398,15 +399,14 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
   };
 
   // Navigation
-  const goToPrevious = () => {
-    if (currentIndex > 0) setCurrentIndex(currentIndex - 1);
-  };
+  const goToPrevious = useCallback(() => {
+    setCurrentIndex((idx) => (idx > 0 ? idx - 1 : idx));
+  }, []);
 
-  const goToNext = () => {
-    if (manifest && currentIndex < manifest.annotations.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-    }
-  };
+  const goToNext = useCallback(() => {
+    if (!manifest) return;
+    setCurrentIndex((idx) => (idx < manifest.annotations.length - 1 ? idx + 1 : idx));
+  }, [manifest]);
 
   // Zoom controls
   const handleZoomIn = () => setZoom((z) => Math.min(z * 1.2, 4));
@@ -480,7 +480,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, manifest]);
+  }, [currentIndex, goToNext, goToPrevious, manifest]);
 
   if (loading) {
     return (
@@ -789,10 +789,17 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
               <div className="border-t border-gray-700 pt-4">
                 <div className="flex items-center gap-2">
                   {isModified ? (
-                    <>
-                      <AlertTriangle className="w-4 h-4 text-amber-500" />
-                      <span className="text-sm text-amber-400">Modified (unsaved)</span>
-                    </>
+                    hasChanges ? (
+                      <>
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        <span className="text-sm text-amber-400">Modified (unsaved)</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        <span className="text-sm text-green-400">Modified (saved)</span>
+                      </>
+                    )
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4 text-green-500" />
@@ -802,7 +809,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
                 </div>
                 {hasChanges && (
                   <p className="text-xs text-amber-400 mt-2">
-                    You have unsaved changes. Click "Save Overrides" to persist.
+                    You have unsaved changes. Click &quot;Save Overrides&quot; to persist.
                   </p>
                 )}
               </div>
@@ -811,7 +818,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
               {overrides.size > 0 && (
                 <div className="border-t border-gray-700 pt-4">
                   <h4 className="text-sm font-medium text-gray-300 mb-2">
-                    Pending Overrides ({overrides.size})
+                    {hasChanges ? 'Pending' : 'Saved'} Overrides ({overrides.size})
                   </h4>
                   <div className="max-h-32 overflow-y-auto space-y-1">
                     {Array.from(overrides.keys()).map((defectId) => {

@@ -41,10 +41,12 @@ export default function ModelPage() {
   const [checkingDataset, setCheckingDataset] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [cocoBusy, setCocoBusy] = useState(false);
   const [launchBusy, setLaunchBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const getErrorMessage = (err: unknown, fallback: string) =>
+    err instanceof Error ? err.message : fallback;
 
   const fetchModels = useCallback(async () => {
     setError(null);
@@ -67,8 +69,8 @@ export default function ModelPage() {
     setLoading(true);
     try {
       await Promise.all([fetchModels(), fetchArchives()]);
-    } catch (e: any) {
-      setError(e.message || 'Failed to load data');
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Failed to load data'));
     } finally {
       setLoading(false);
     }
@@ -82,22 +84,6 @@ export default function ModelPage() {
     if (archives.length === 0) return '';
     return archives[0].metadata_uri;
   }, [archives]);
-
-  const triggerManifest = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const resp = await fetch(buildApiUrl('/api/training-data/manifests'), { method: 'POST' });
-      if (!resp.ok) throw new Error('Failed to generate manifest');
-      const data = await resp.json();
-      setManifestUri(data.manifest_uri || '');
-      await refreshAll();
-    } catch (e: any) {
-      setError(e.message || 'Manifest generation failed');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const prepareJob = async () => {
     const epochsInt = parseInt(epochs, 10);
@@ -128,8 +114,8 @@ export default function ModelPage() {
       }
       await refreshAll();
       setSuccess('Prepared: manifest saved, COCO build queued, registry entry created.');
-    } catch (e: any) {
-      setError(e.message || 'Prepare failed');
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Prepare failed'));
     } finally {
       setBusy(false);
     }
@@ -199,7 +185,7 @@ export default function ModelPage() {
     setError(null);
     setSuccess(null);
     try {
-      const payload: any = {
+      const payload: Record<string, string | number | undefined> = {
         manifest_uri: manifestUri || undefined,
         dataset_archive_uri: datasetUri || undefined,
         epochs: parseInt(epochs, 10) || undefined,
@@ -214,40 +200,10 @@ export default function ModelPage() {
       if (!resp.ok) throw new Error('Failed to launch Batch job');
       await refreshAll();
       setSuccess('Batch job submitted. Monitor Batch queue and CloudWatch logs.');
-    } catch (e: any) {
-      setError(e.message || 'Batch launch failed');
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Batch launch failed'));
     } finally {
       setLaunchBusy(false);
-    }
-  };
-
-  const buildCoco = async () => {
-    const manifest = manifestUri || latestManifest;
-    if (!manifest) {
-      setError('Select or generate a manifest before building COCO.');
-      return;
-    }
-    setCocoBusy(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const resp = await fetch(buildApiUrl('/api/training-data/coco'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manifest_uri: manifest }),
-      });
-      if (!resp.ok) throw new Error('Failed to start COCO build');
-      const data = await resp.json();
-      if (data.dataset_upload_uri) {
-        setDatasetUri(data.dataset_upload_uri);
-        setSuccess(`COCO build job submitted. Dataset: ${data.dataset_upload_uri}`);
-      } else {
-        setSuccess('COCO build job submitted.');
-      }
-    } catch (e: any) {
-      setError(e.message || 'COCO build failed');
-    } finally {
-      setCocoBusy(false);
     }
   };
 
@@ -263,8 +219,8 @@ export default function ModelPage() {
       });
       if (!resp.ok) throw new Error('Failed to promote model');
       await refreshAll();
-    } catch (e: any) {
-      setError(e.message || 'Promotion failed');
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Promotion failed'));
     } finally {
       setBusy(false);
     }
@@ -282,8 +238,8 @@ export default function ModelPage() {
       if (!resp.ok) throw new Error('Failed to delete model');
       await refreshAll();
       setSuccess('Model deleted');
-    } catch (e: any) {
-      setError(e.message || 'Delete failed');
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Delete failed'));
     } finally {
       setBusy(false);
     }

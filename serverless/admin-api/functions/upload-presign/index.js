@@ -45,21 +45,17 @@ exports.handler = async (event) => {
     // Generate file ID
     const fileId = ulid();
 
-    // S3 key path
-    const s3Key = `${orgId}/projects/${projectId}/raw/${fileId}_${filename}`;
+    // S3 key path - use 'images/' to match user app (not 'raw/')
+    const s3Key = `${orgId}/projects/${projectId}/images/${fileId}_${filename}`;
 
     // Generate presigned URL for PUT
+    // Note: We don't include Metadata in the signed URL to simplify browser uploads.
+    // The file metadata is stored in DynamoDB instead.
     const presignedUrl = s3.getSignedUrl('putObject', {
       Bucket: uploadsBucket,
       Key: s3Key,
       ContentType: content_type || 'application/octet-stream',
       Expires: 3600, // 1 hour
-      Metadata: {
-        'project-id': projectId,
-        'file-id': fileId,
-        'user-id': orgId,
-        'original-filename': filename,
-      },
     });
 
     // Record file in DynamoDB

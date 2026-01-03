@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Canvas, Rect, Image as FabricImage, TPointerEventInfo, TPointerEvent, FabricObject, Point } from 'fabric';
+import { Canvas, Rect, Image as FabricImage, TPointerEventInfo, TPointerEvent, FabricObject, Point, ActiveSelection } from 'fabric';
 import {
   Save,
   Loader2,
@@ -19,6 +19,9 @@ import {
   Redo2,
   Eye,
   EyeOff,
+  PenTool,
+  Copy,
+  Clipboard,
 } from 'lucide-react';
 import { buildApiUrl } from '@/lib/api-client';
 
@@ -48,6 +51,16 @@ interface AnnotatedRect extends Rect {
   label?: string;
 }
 
+type SavedBox = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  scaleX?: number;
+  scaleY?: number;
+  label?: string;
+};
+
 export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
   console.log('AnnotationTool component loaded with:', { orgId, projectId, env });
   const [mounted, setMounted] = useState(false);
@@ -62,10 +75,12 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPanMode, setIsPanMode] = useState(false);
+  const [isDrawMode, setIsDrawMode] = useState(true); // New: separate draw mode from select
   const [aligning, setAligning] = useState(false);
   const [isClickToPlace, setIsClickToPlace] = useState(false);
   const [medianPanelSize, setMedianPanelSize] = useState<{width: number, height: number} | null>(null);
   const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(new Set());
+  const [clipboard, setClipboard] = useState<SavedBox[]>([]); // For copy/paste
   const isDrawingRef = useRef(false);
   const isPanningRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -236,7 +251,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !imageLoaded) return;
 
-    const handleWheel = (opt: any) => {
+    const handleWheel = (opt: { e: WheelEvent & { offsetX: number; offsetY: number; deltaY: number } }) => {
       const evt = opt.e;
       evt.preventDefault();
       evt.stopPropagation();
@@ -302,9 +317,11 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
         canvas.add(rect);
         setBoxCount((prev) => prev + 1);
         canvas.renderAll();
-      } else {
-        // Draw mode - only start drawing if clicking on empty space
-        if (canvas.getActiveObject()) return;
+      } else if (isDrawMode) {
+        // Draw mode - ONLY draw new boxes, don't select existing ones
+        // Check if clicking on an existing rect - if so, don't start drawing
+        const target = canvas.findTarget(e.e);
+        if (target && target.type === 'rect') return;
 
         saveUndoState(); // Save state before drawing
         isDrawingRef.current = true;
@@ -323,12 +340,14 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
           cornerColor: labelConfig?.color || '#22c55e',
           cornerSize: 2,
           transparentCorners: false,
+          selectable: false, // Not selectable while drawing
         }) as AnnotatedRect;
         rect.label = selectedLabel;
 
         currentRectRef.current = rect;
         canvas.add(rect);
       }
+      // Select mode: let Fabric.js handle selection naturally (no custom code needed)
     };
 
     const handleMouseMove = (e: TPointerEventInfo<TPointerEvent>) => {
@@ -389,6 +408,19 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
       canvas.renderAll();
     };
 
+    // Configure canvas selection based on mode
+    // In Draw mode: disable selection so we can draw freely
+    // In Select mode: enable selection
+    canvas.selection = !isDrawMode && !isPanMode && !isClickToPlace;
+
+    // Make all rects selectable or not based on mode
+    canvas.getObjects().forEach((obj) => {
+      if (obj.type === 'rect') {
+        obj.selectable = !isDrawMode && !isPanMode && !isClickToPlace;
+        obj.evented = !isPanMode;
+      }
+    });
+
     canvas.on('mouse:down', handleMouseDown);
     canvas.on('mouse:move', handleMouseMove);
     canvas.on('mouse:up', handleMouseUp);
@@ -398,7 +430,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
       canvas.off('mouse:move', handleMouseMove);
       canvas.off('mouse:up', handleMouseUp);
     };
-  }, [imageLoaded, selectedLabel, isPanMode, isClickToPlace, medianPanelSize]);
+  }, [imageLoaded, selectedLabel, isPanMode, isDrawMode, isClickToPlace, medianPanelSize]);
 
   const handleSave = useCallback(async () => {
     const canvas = fabricCanvasRef.current;
@@ -508,14 +540,14 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
     const previousState = undoStackRef.current.pop();
     if (!previousState) return;
 
-    const boxes = JSON.parse(previousState);
+    const boxes = JSON.parse(previousState) as SavedBox[];
 
     // Remove all rects
     const rectsToRemove = canvas.getObjects().filter(obj => obj.type === 'rect');
     rectsToRemove.forEach(obj => canvas.remove(obj));
 
     // Restore boxes
-    boxes.forEach((box: any) => {
+    boxes.forEach((box) => {
       const labelConfig = LABELS.find((l) => l.id === box.label);
       const rect = new Rect({
         left: box.left,
@@ -567,14 +599,14 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
     const redoState = redoStackRef.current.pop();
     if (!redoState) return;
 
-    const boxes = JSON.parse(redoState);
+    const boxes = JSON.parse(redoState) as SavedBox[];
 
     // Remove all rects
     const rectsToRemove = canvas.getObjects().filter(obj => obj.type === 'rect');
     rectsToRemove.forEach(obj => canvas.remove(obj));
 
     // Restore boxes
-    boxes.forEach((box: any) => {
+    boxes.forEach((box) => {
       const labelConfig = LABELS.find((l) => l.id === box.label);
       const rect = new Rect({
         left: box.left,
@@ -598,11 +630,111 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
     canvas.renderAll();
   }, []);
 
+  // Copy selected annotations to clipboard
+  const handleCopy = useCallback(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return;
+
+    const activeObjects = canvas.getActiveObjects();
+    if (activeObjects.length === 0) return;
+
+    const copiedBoxes: SavedBox[] = [];
+
+    // Check if we have an ActiveSelection (multiple objects selected)
+    const isMultiSelect = activeObject.type === 'activeselection' || activeObject.type === 'activeSelection';
+
+    activeObjects.forEach((obj) => {
+      if (obj.type === 'rect') {
+        const rect = obj as AnnotatedRect;
+
+        // When objects are in an ActiveSelection, their coordinates are relative to the group
+        // We need to calculate absolute canvas coordinates
+        let absLeft = obj.left!;
+        let absTop = obj.top!;
+
+        if (isMultiSelect) {
+          // Get the selection's center position and calculate absolute coords
+          const selectionLeft = activeObject.left! + (activeObject.width! * (activeObject.scaleX || 1)) / 2;
+          const selectionTop = activeObject.top! + (activeObject.height! * (activeObject.scaleY || 1)) / 2;
+          absLeft = selectionLeft + obj.left!;
+          absTop = selectionTop + obj.top!;
+        }
+
+        copiedBoxes.push({
+          left: absLeft,
+          top: absTop,
+          width: obj.width!,
+          height: obj.height!,
+          scaleX: obj.scaleX || 1,
+          scaleY: obj.scaleY || 1,
+          label: rect.label,
+        });
+      }
+    });
+
+    if (copiedBoxes.length > 0) {
+      setClipboard(copiedBoxes);
+    }
+  }, []);
+
+  // Paste annotations from clipboard
+  const handlePaste = useCallback(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || clipboard.length === 0) return;
+
+    saveUndoState();
+
+    // Paste with a small offset (20px in canvas space) so user can see the new boxes
+    // The offset is applied to the original positions, placing them slightly to the right and down
+    const offset = 20;
+
+    const newRects: Rect[] = [];
+    clipboard.forEach((box) => {
+      const labelConfig = LABELS.find((l) => l.id === box.label);
+      const rect = new Rect({
+        left: box.left + offset,
+        top: box.top + offset,
+        width: box.width,
+        height: box.height,
+        scaleX: box.scaleX || 1,
+        scaleY: box.scaleY || 1,
+        fill: 'transparent',
+        stroke: labelConfig?.color || '#22c55e',
+        strokeWidth: 0.25,
+        cornerColor: labelConfig?.color || '#22c55e',
+        cornerSize: 2,
+        transparentCorners: false,
+        selectable: !isDrawMode && !isPanMode && !isClickToPlace,
+      }) as AnnotatedRect;
+      rect.label = box.label;
+      canvas.add(rect);
+      newRects.push(rect);
+    });
+
+    // Select the newly pasted objects so user can immediately move them
+    if (!isDrawMode && !isPanMode && !isClickToPlace) {
+      if (newRects.length === 1) {
+        canvas.setActiveObject(newRects[0]);
+      } else if (newRects.length > 1) {
+        // For multiple objects, create an ActiveSelection
+        canvas.discardActiveObject();
+        const sel = new ActiveSelection(newRects, { canvas });
+        canvas.setActiveObject(sel);
+      }
+    }
+
+    setBoxCount((prev) => prev + clipboard.length);
+    canvas.renderAll();
+  }, [clipboard, isDrawMode, isPanMode, isClickToPlace]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Undo: Ctrl+Z
-      if (e.ctrlKey && e.key === 'z') {
+      if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         handleUndo();
         return;
@@ -613,15 +745,32 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
         handleRedo();
         return;
       }
+      // Copy: Ctrl+C
+      if (e.ctrlKey && e.key === 'c') {
+        e.preventDefault();
+        handleCopy();
+        return;
+      }
+      // Paste: Ctrl+V
+      if (e.ctrlKey && e.key === 'v') {
+        e.preventDefault();
+        handlePaste();
+        return;
+      }
       // Delete selected
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const canvas = fabricCanvasRef.current;
         if (!canvas) return;
-        const active = canvas.getActiveObject();
-        if (active && active.type === 'rect') {
+        const activeObjects = canvas.getActiveObjects();
+        if (activeObjects.length > 0) {
           saveToUndoStack();
-          canvas.remove(active);
-          setBoxCount((prev) => prev - 1);
+          activeObjects.forEach((obj) => {
+            if (obj.type === 'rect') {
+              canvas.remove(obj);
+            }
+          });
+          canvas.discardActiveObject();
+          setBoxCount((prev) => prev - activeObjects.filter(o => o.type === 'rect').length);
           canvas.renderAll();
         }
       }
@@ -632,17 +781,27 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
           setSelectedLabel(LABELS[index].id);
         }
       }
-      // Mode shortcuts: S = Select, P = Pan, C = Click
-      if (e.key === 's' && !e.ctrlKey) {
+      // Mode shortcuts: B = Box/Draw, S = Select, P = Pan, C = Click-to-place
+      if (e.key === 'b' && !e.ctrlKey) {
+        // Box/Draw mode
+        setIsDrawMode(true);
         setIsPanMode(false);
         setIsClickToPlace(false);
       }
-      if (e.key === 'p') {
+      if (e.key === 's' && !e.ctrlKey) {
+        // Select mode (no drawing)
+        setIsDrawMode(false);
+        setIsPanMode(false);
+        setIsClickToPlace(false);
+      }
+      if (e.key === 'p' && !e.ctrlKey) {
+        // Pan mode
         setIsPanMode(true);
+        setIsDrawMode(false);
         setIsClickToPlace(false);
       }
       if (e.key === 'c' && !e.ctrlKey) {
-        // Trigger click-to-place mode (same as clicking the button)
+        // Click-to-place mode
         const canvas = fabricCanvasRef.current;
         if (!canvas) return;
         const panels = canvas.getObjects().filter(obj => {
@@ -663,6 +822,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
           height: heights[Math.floor(heights.length / 2)],
         });
         setIsClickToPlace(true);
+        setIsDrawMode(false);
         setIsPanMode(false);
       }
       // Ctrl+S to save
@@ -674,7 +834,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSave, handleUndo, handleRedo, saveToUndoStack]);
+  }, [handleSave, handleUndo, handleRedo, handleCopy, handlePaste, saveToUndoStack]);
 
   const handleZoom = (delta: number) => {
     const canvas = fabricCanvasRef.current;
@@ -951,26 +1111,40 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
 
           {/* Mode Toggle */}
           <div className="border-t border-gray-700 pt-3">
-            <div className="text-xs text-gray-400 mb-2">Mode (S/P/C)</div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="text-xs text-gray-400 mb-2">Mode (B/S/P/C)</div>
+            <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => { setIsPanMode(false); setIsClickToPlace(false); }}
+                onClick={() => { setIsDrawMode(true); setIsPanMode(false); setIsClickToPlace(false); }}
                 className={`flex items-center justify-center gap-1 px-2 py-1 rounded text-xs ${
-                  !isPanMode && !isClickToPlace
+                  isDrawMode && !isPanMode && !isClickToPlace
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                 }`}
+                title="Draw bounding boxes (B)"
+              >
+                <PenTool className="h-3 w-3" />
+                Box
+              </button>
+              <button
+                onClick={() => { setIsDrawMode(false); setIsPanMode(false); setIsClickToPlace(false); }}
+                className={`flex items-center justify-center gap-1 px-2 py-1 rounded text-xs ${
+                  !isDrawMode && !isPanMode && !isClickToPlace
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+                title="Select annotations (S)"
               >
                 <Pointer className="h-3 w-3" />
                 Select
               </button>
               <button
-                onClick={() => { setIsPanMode(true); setIsClickToPlace(false); }}
+                onClick={() => { setIsPanMode(true); setIsDrawMode(false); setIsClickToPlace(false); }}
                 className={`flex items-center justify-center gap-1 px-2 py-1 rounded text-xs ${
                   isPanMode
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                 }`}
+                title="Pan/navigate (P)"
               >
                 <Hand className="h-3 w-3" />
                 Pan
@@ -982,6 +1156,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
                     ? 'bg-green-600 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                 }`}
+                title="Click to place panels (C)"
               >
                 <MousePointer className="h-3 w-3" />
                 Click
@@ -996,6 +1171,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
               <button
                 onClick={handleUndo}
                 className="flex items-center justify-center gap-1 px-2 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600"
+                title="Undo (Ctrl+Z)"
               >
                 <Undo2 className="h-3 w-3" />
                 Undo
@@ -1003,9 +1179,34 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
               <button
                 onClick={handleRedo}
                 className="flex items-center justify-center gap-1 px-2 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600"
+                title="Redo (Ctrl+Y)"
               >
                 <Redo2 className="h-3 w-3" />
                 Redo
+              </button>
+            </div>
+          </div>
+
+          {/* Copy/Paste */}
+          <div className="border-t border-gray-700 pt-3">
+            <div className="text-xs text-gray-400 mb-2">Clipboard {clipboard.length > 0 && `(${clipboard.length})`}</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={handleCopy}
+                className="flex items-center justify-center gap-1 px-2 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600"
+                title="Copy selected (Ctrl+C)"
+              >
+                <Copy className="h-3 w-3" />
+                Copy
+              </button>
+              <button
+                onClick={handlePaste}
+                disabled={clipboard.length === 0}
+                className="flex items-center justify-center gap-1 px-2 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Paste (Ctrl+V)"
+              >
+                <Clipboard className="h-3 w-3" />
+                Paste
               </button>
             </div>
           </div>

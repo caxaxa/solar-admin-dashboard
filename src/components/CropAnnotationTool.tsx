@@ -37,9 +37,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
   const [error, setError] = useState<string | null>(null);
   const [toolMode, setToolMode] = useState<ToolMode>('select');
   const toolModeRef = useRef<ToolMode>('select'); // Keep ref in sync with state
-  const [imageScale, setImageScale] = useState(1);
   const imageScaleRef = useRef<number>(1); // Keep ref in sync with state
-  const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
   const imageOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 }); // Keep ref in sync with state
 
   // Annotation state
@@ -255,9 +253,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
       const offsetX = 0;
       const offsetY = 0;
 
-      setImageScale(scale);
       imageScaleRef.current = scale;
-      setImageOffset({ x: offsetX, y: offsetY });
       imageOffsetRef.current = { x: offsetX, y: offsetY };
 
       console.log('Scale:', scale, 'Offset:', offsetX, offsetY);

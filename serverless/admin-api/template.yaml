@@ -316,8 +316,23 @@ Resources:
                 - arn:aws:s3:::solar-ai-training/*
             - Effect: Allow
               Action:
+                - s3:ListBucket
+              Resource:
+                - arn:aws:s3:::solar-uploads-dev
+                - arn:aws:s3:::solar-uploads-prod
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+                - s3:DeleteObject
+              Resource:
+                - arn:aws:s3:::solar-uploads-dev/*
+                - arn:aws:s3:::solar-uploads-prod/*
+            - Effect: Allow
+              Action:
                 - dynamodb:GetItem
                 - dynamodb:UpdateItem
+                - dynamodb:Query
+                - dynamodb:DeleteItem
               Resource:
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}

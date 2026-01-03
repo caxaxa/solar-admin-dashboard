@@ -249,7 +249,7 @@ export function DefectMapViewer({ projectId }: DefectMapViewerProps) {
       }
 
       if (!isDragging) return;
-      setPosition((prev) => {
+      setPosition(() => {
         const nextX = e.clientX - dragStart.x;
         const nextY = e.clientY - dragStart.y;
         return clampPosition(nextX, nextY, scale);
@@ -397,6 +397,7 @@ export function DefectMapViewer({ projectId }: DefectMapViewerProps) {
           }}
         >
           {/* Orthophoto image */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             ref={imageRef}
             src={mapData.ortho_url}
@@ -547,6 +548,7 @@ function DefectPopup({ defect, isPinned, onClose, isMobile }: DefectPopupProps) 
                 <Thermometer className="h-8 w-8" />
               </div>
             ) : (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={defect.thermal_image_url}
                 alt="Thermal image"

@@ -689,6 +689,9 @@ async function listFilesInPrefix(prefix, metadataKey) {
 async function promoteModel(modelVersion, body) {
   const now = Math.floor(Date.now() / 1000);
 
+  // Get current production model to clear its is_production flag
+  const currentProd = await getProdPointer();
+
   // Update pointer
   await ddb
     .put({
@@ -702,13 +705,34 @@ async function promoteModel(modelVersion, body) {
     })
     .promise();
 
+  // Clear is_production from previous model (if exists and different)
+  if (currentProd && currentProd !== modelVersion) {
+    await ddb
+      .update({
+        TableName: MODEL_REGISTRY_TABLE,
+        Key: { model_version: currentProd },
+        UpdateExpression: 'SET is_production = :false, #status = :status',
+        ExpressionAttributeNames: {
+          '#status': 'status',
+        },
+        ExpressionAttributeValues: {
+          ':false': false,
+          ':status': 'archived',
+        },
+      })
+      .promise();
+  }
+
   // Mark model as production
   await ddb
     .update({
       TableName: MODEL_REGISTRY_TABLE,
       Key: { model_version: modelVersion },
       UpdateExpression:
-        'SET is_production = :true, status = :status, promoted_at = :ts, promoted_by = :by',
+        'SET is_production = :true, #status = :status, promoted_at = :ts, promoted_by = :by',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+      },
       ExpressionAttributeValues: {
         ':true': true,
         ':status': 'production',

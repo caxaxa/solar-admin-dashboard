@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { FolderOpen, ChevronRight, Loader2, Plus, Play, Clock, Upload } from 'lucide-react';
+import { FolderOpen, ChevronRight, Loader2, Plus, Play, Clock, Upload, Trash2 } from 'lucide-react';
 import { buildApiUrl } from '@/lib/api-client';
 import { CreateProjectModal } from './CreateProjectModal';
 
@@ -84,6 +84,37 @@ export function ProjectsList() {
     }
   };
 
+  const handleDeleteProject = async (project: PendingProject) => {
+    const confirmMessage = `Are you sure you want to delete project "${project.projectName}"?\n\nThis will delete ${project.fileCount} uploaded files and cannot be undone.`;
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    const key = `delete-${project.environment}-${project.projectId}`;
+    setActionLoading(key);
+    try {
+      const response = await fetch(
+        buildApiUrl(`/projects/${project.orgId}/${project.projectId}/actions/delete?env=${project.environment}`),
+        { method: 'POST' }
+      );
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || errorData.message || 'Failed to delete project');
+      }
+      const data = await response.json();
+
+      alert(`Project deleted successfully!\n\nDeleted ${data.deletedFiles} files and ${data.deletedRecords} database records.`);
+
+      // Refresh projects list
+      await fetchProjects();
+    } catch (err) {
+      console.error('Failed to delete project:', err);
+      alert(`Failed to delete project: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -126,12 +157,6 @@ export function ProjectsList() {
       </div>
     );
   }
-
-  // Group pending projects by environment
-  const pendingByEnv: Record<string, PendingProject[]> = {
-    prod: pendingProjects.filter(p => p.environment === 'prod'),
-    dev: pendingProjects.filter(p => p.environment === 'dev'),
-  };
 
   if (projects.length === 0 && pendingProjects.length === 0) {
     return (
@@ -198,8 +223,11 @@ export function ProjectsList() {
             <div className="divide-y">
               {pendingProjects.map((project) => {
                 const key = `${project.environment}-${project.projectId}`;
+                const deleteKey = `delete-${project.environment}-${project.projectId}`;
                 const isLoading = actionLoading === key;
+                const isDeleting = actionLoading === deleteKey;
                 const canStartOdm = project.status === 'uploading' && project.fileCount > 0;
+                const canDelete = ['creating', 'uploading', 'validating'].includes(project.status);
 
                 return (
                   <div
@@ -240,7 +268,7 @@ export function ProjectsList() {
                         {canStartOdm && (
                           <button
                             onClick={() => handleStartOdm(project)}
-                            disabled={isLoading}
+                            disabled={isLoading || isDeleting}
                             className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50"
                           >
                             {isLoading ? (
@@ -249,6 +277,20 @@ export function ProjectsList() {
                               <Play className="h-4 w-4" />
                             )}
                             Gerar Relatório
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button
+                            onClick={() => handleDeleteProject(project)}
+                            disabled={isLoading || isDeleting}
+                            className="flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                            title="Delete pending project"
+                          >
+                            {isDeleting ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
                           </button>
                         )}
                         {project.status === 'processing' && (
