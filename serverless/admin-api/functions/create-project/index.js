@@ -31,6 +31,34 @@ async function getUserEmail(userId) {
 }
 
 /**
+ * Get all admin emails from Cognito admin group
+ */
+async function getAdminEmails() {
+  try {
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (!userPoolId) return [];
+
+    const response = await cognito.listUsersInGroup({
+      UserPoolId: userPoolId,
+      GroupName: 'admin',
+      Limit: 60,
+    }).promise();
+
+    const emails = [];
+    for (const user of response.Users || []) {
+      const emailAttr = user.Attributes?.find(attr => attr.Name === 'email');
+      if (emailAttr?.Value) {
+        emails.push(emailAttr.Value);
+      }
+    }
+    return emails;
+  } catch (error) {
+    console.error('Failed to get admin emails', error);
+    return [];
+  }
+}
+
+/**
  * Create a new project on behalf of a user.
  * This allows admins to create projects when they collect images instead of the user.
  */
@@ -101,12 +129,17 @@ exports.handler = async (event) => {
 
     console.log(`Created project ${projectId} for user ${userId} in ${env} (table: ${projectsTable})`);
 
-    // Send email notification to user
+    // Send email notification to user and admins
     const userEmail = await getUserEmail(userId);
-    if (userEmail) {
-      console.log(`Attempting to send email to ${userEmail}...`);
+    const adminEmails = await getAdminEmails();
+
+    // Combine all recipients (user + admins), removing duplicates
+    const allRecipients = [...new Set([userEmail, ...adminEmails].filter(Boolean))];
+
+    if (allRecipients.length > 0) {
+      console.log(`Attempting to send email to ${allRecipients.join(', ')}...`);
       try {
-        const emailResult = await sendEmail(userEmail, 'projectCreated', {
+        const emailResult = await sendEmail(allRecipients, 'projectCreated', {
           projectId,
           projectName,
           description: description || '',
@@ -117,7 +150,7 @@ exports.handler = async (event) => {
         console.error('Email notification failed:', emailErr.message, emailErr.stack);
       }
     } else {
-      console.log(`Could not find email for user ${userId}, skipping notification`);
+      console.log(`No recipients found for user ${userId}, skipping notification`);
     }
 
     return jsonResponse(200, {

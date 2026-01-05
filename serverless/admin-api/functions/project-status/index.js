@@ -31,6 +31,7 @@ exports.handler = async (event) => {
       hasInferenceResults,
       hasHumanReview,
       hasReport,
+      hasTexEdit,
     ] = await Promise.all([
       // Step 2: ODM creates original TIF
       objectExists(orthosBucket, `${orgId}/projects/${projectId}/odm_orthophoto.tif`).catch(() => false),
@@ -42,6 +43,8 @@ exports.handler = async (event) => {
       objectExists(groundtruthBucket, `${orgId}/projects/${projectId}/groundtruth/defect_labels.json`).catch(() => false),
       // Step 6: Report generation
       objectExists(reportsBucket, `${orgId}/projects/${projectId}/thermographic-report/report-lowres.pdf`).catch(() => false),
+      // Check if TeX has been manually edited (marker file exists in tex_bundle)
+      objectExists(reportsBucket, `${orgId}/projects/${projectId}/tex_bundle/.edited`).catch(() => false),
     ]);
 
     // Check if project is released by looking for metadata.json in training bucket
@@ -74,6 +77,7 @@ exports.handler = async (event) => {
       hasReport,
       reportFullUrl,
       isReleased,
+      hasTexEdit,
     });
   } catch (error) {
     console.error('Failed to fetch project status', error);

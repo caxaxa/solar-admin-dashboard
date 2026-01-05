@@ -91,6 +91,118 @@ Este e um email automatico, por favor nao responda.
     `,
   }),
 
+  projectReleasedWithError: (data) => ({
+    subject: `${COMPANY_NAME} - Aviso sobre seu Projeto: ${data.projectName}`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+    .header h1 { margin: 0; font-size: 24px; }
+    .content { background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; }
+    .warning-icon { font-size: 48px; margin-bottom: 10px; }
+    .project-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .project-name { font-size: 20px; font-weight: bold; color: #111827; margin-bottom: 10px; }
+    .project-id { font-family: monospace; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: #6b7280; }
+    .status-error { color: #dc2626; font-weight: bold; }
+    .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }
+    .alert-box { background: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+    .contact-box { background: #eff6ff; border: 1px solid #bfdbfe; padding: 20px; border-radius: 8px; margin: 20px 0; }
+    .contact-box h3 { margin: 0 0 10px 0; color: #1e40af; }
+    .contact-item { margin: 8px 0; }
+    .contact-item strong { color: #1e40af; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="warning-icon">&#9888;</div>
+      <h1>Aviso Importante sobre seu Projeto</h1>
+    </div>
+    <div class="content">
+      <p>Prezado cliente,</p>
+
+      <div class="alert-box">
+        <p style="margin: 0;"><strong>Infelizmente, nao foi possivel processar o relatorio termografico do seu projeto com os arquivos fornecidos.</strong></p>
+      </div>
+
+      <div class="project-card">
+        <div class="project-name">${data.projectName}</div>
+        <p><strong>ID do Projeto:</strong> <span class="project-id">${data.projectId}</span></p>
+        <p><strong>Status:</strong> <span class="status-error">Nao Processado</span></p>
+        <p><strong>Data:</strong> ${new Date().toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric'
+        })}</p>
+      </div>
+
+      <p>Isso pode ter ocorrido por diversos motivos, como:</p>
+      <ul>
+        <li>Qualidade insuficiente das imagens termograficas</li>
+        <li>Cobertura incompleta da area inspecionada</li>
+        <li>Problemas com os metadados GPS das imagens</li>
+        <li>Formato de arquivo incompativel</li>
+      </ul>
+
+      <div class="contact-box">
+        <h3>Entre em Contato Conosco</h3>
+        <p>Nossa equipe esta pronta para ajuda-lo a resolver esta situacao:</p>
+        <div class="contact-item">
+          <strong>Email:</strong> suporte@aisol.cloud
+        </div>
+        <div class="contact-item">
+          <strong>WhatsApp:</strong> +55 (11) 99999-9999
+        </div>
+        <div class="contact-item">
+          <strong>Horario:</strong> Segunda a Sexta, 9h as 18h
+        </div>
+      </div>
+
+      <p>Pedimos desculpas pelo inconveniente e estamos a disposicao para auxiliar no reenvio das imagens ou esclarecer qualquer duvida.</p>
+    </div>
+    <div class="footer">
+      <p>&copy; ${new Date().getFullYear()} ${COMPANY_NAME}. Todos os direitos reservados.</p>
+      <p>Este e um email automatico, por favor responda para suporte@aisol.cloud.</p>
+    </div>
+  </div>
+</body>
+</html>
+    `,
+    text: `
+${COMPANY_NAME} - Aviso Importante sobre seu Projeto
+
+Prezado cliente,
+
+Infelizmente, nao foi possivel processar o relatorio termografico do seu projeto com os arquivos fornecidos.
+
+Projeto: ${data.projectName}
+ID: ${data.projectId}
+Status: Nao Processado
+Data: ${new Date().toLocaleDateString('pt-BR')}
+
+Isso pode ter ocorrido por diversos motivos, como:
+- Qualidade insuficiente das imagens termograficas
+- Cobertura incompleta da area inspecionada
+- Problemas com os metadados GPS das imagens
+- Formato de arquivo incompativel
+
+ENTRE EM CONTATO CONOSCO:
+- Email: suporte@aisol.cloud
+- WhatsApp: +55 (11) 99999-9999
+- Horario: Segunda a Sexta, 9h as 18h
+
+Pedimos desculpas pelo inconveniente e estamos a disposicao para auxiliar.
+
+---
+${COMPANY_NAME}
+    `,
+  }),
+
   projectReleased: (data) => ({
     subject: `${COMPANY_NAME} - Relatorio Pronto: ${data.projectName}`,
     html: `

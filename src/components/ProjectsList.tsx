@@ -10,6 +10,11 @@ interface Project {
   orgId: string;
   projectId: string;
   environment: 'dev' | 'prod';
+  projectName?: string;
+  status?: string;
+  releaseStatus?: string;
+  stages?: Record<string, any>;
+  isReleased?: boolean;
 }
 
 interface PendingProject {
@@ -23,6 +28,9 @@ interface PendingProject {
   totalSizeBytes: number;
   createdAt: number;
   environment: 'dev' | 'prod';
+  releaseStatus?: string;
+  stages?: Record<string, any>;
+  isReleased?: boolean;
 }
 
 interface OrgInfo {
@@ -37,6 +45,7 @@ export function ProjectsList() {
   const [error, setError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string[]>(['all']);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -127,14 +136,60 @@ export function ProjectsList() {
     return new Date(timestamp * 1000).toLocaleString();
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'processing': return 'bg-blue-100 text-blue-800';
-      case 'uploading': return 'bg-yellow-100 text-yellow-800';
-      case 'validating': return 'bg-purple-100 text-purple-800';
-      case 'creating': return 'bg-gray-100 text-gray-800';
-      default: return 'bg-gray-100 text-gray-800';
+  const getDisplayStatus = (project: Partial<Project> | PendingProject) => {
+    const thermoReportStatus = (project as any)?.stages?.thermo_report?.status;
+    const thermoReportFailed = thermoReportStatus === 'FAILED';
+    const hasReleaseError =
+      project.releaseStatus === 'error' ||
+      project.status === 'release_error' ||
+      project.status === 'release_failed' ||
+      thermoReportFailed;
+
+    if (hasReleaseError) {
+      return { text: 'Falha na liberação', color: 'bg-red-100 text-red-800' };
     }
+
+    const isReleased =
+      (project as any)?.isReleased === true || thermoReportStatus === 'COMPLETED';
+
+    if (project.status === 'failed' || project.status === 'validation_failed') {
+      return { text: 'Falhou', color: 'bg-red-100 text-red-800' };
+    }
+
+    if (isReleased) {
+      return { text: 'Concluído', color: 'bg-green-100 text-green-800' };
+    }
+
+    if (project.status === 'completed') {
+      return { text: 'Processando Relatório', color: 'bg-purple-100 text-purple-800' };
+    }
+
+    const statusMap: Record<string, { text: string; color: string }> = {
+      creating: { text: 'Criando', color: 'bg-gray-100 text-gray-800' },
+      uploading: { text: 'Enviando', color: 'bg-blue-100 text-blue-800' },
+      validating: { text: 'Validando', color: 'bg-yellow-100 text-yellow-800' },
+      processing: { text: 'Processando', color: 'bg-purple-100 text-purple-800' },
+      processing_odm: { text: 'Processando ODM', color: 'bg-purple-100 text-purple-800' },
+      deleted: { text: 'Deletado', color: 'bg-gray-200 text-gray-800' },
+    };
+
+    return statusMap[project.status || ''] || { text: 'Processando', color: 'bg-gray-100 text-gray-800' };
+  };
+
+  const filteredPending = pendingProjects.filter((p) => {
+    if (statusFilter.includes('all')) return true;
+    return statusFilter.includes(getDisplayStatus(p).text);
+  });
+
+  const filterProjectsByStatus = (projectList: Project[]) => {
+    if (statusFilter.includes('all')) return projectList;
+    return projectList.filter((p) => statusFilter.includes(getDisplayStatus(p).text));
+  };
+
+  const availableStatusFilters = () => {
+    const statuses = new Set<string>();
+    [...projects, ...pendingProjects].forEach((p) => statuses.add(getDisplayStatus(p).text));
+    return ['all', ...Array.from(statuses)];
   };
 
   useEffect(() => {
@@ -170,13 +225,15 @@ export function ProjectsList() {
     );
   }
 
+  const filteredProjects = filterProjectsByStatus(projects);
+
   // Group projects by environment then organization
   const projectsByEnvAndOrg: Record<string, Record<string, Project[]>> = {
     prod: {},
     dev: {},
   };
 
-  projects.forEach((project) => {
+  filteredProjects.forEach((project) => {
     const { orgId, environment } = project;
     if (!projectsByEnvAndOrg[environment][orgId]) {
       projectsByEnvAndOrg[environment][orgId] = [];
@@ -186,17 +243,44 @@ export function ProjectsList() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <h3 className="text-lg font-medium text-gray-900 dark:text-gray-50">
-          All Projects ({projects.length})
+          All Projects ({filteredProjects.length}{!statusFilter.includes('all') ? ` of ${projects.length}` : ''})
         </h3>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Create Project
-        </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            {availableStatusFilters().map((status) => (
+              <label key={status} className="flex items-center gap-1 text-sm text-gray-700 dark:text-gray-200">
+                <input
+                  type="checkbox"
+                  checked={statusFilter.includes(status)}
+                  onChange={(e) => {
+                    if (status === 'all') {
+                      setStatusFilter(['all']);
+                      return;
+                    }
+                    const next = new Set(statusFilter.filter((s) => s !== 'all'));
+                    if (e.target.checked) {
+                      next.add(status);
+                    } else {
+                      next.delete(status);
+                    }
+                    setStatusFilter(next.size === 0 ? ['all'] : Array.from(next));
+                  }}
+                  className="h-4 w-4"
+                />
+                {status === 'all' ? 'Todos' : status}
+              </label>
+            ))}
+          </div>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Create Project
+          </button>
+        </div>
       </div>
 
       {showCreateModal && (
@@ -208,20 +292,20 @@ export function ProjectsList() {
       )}
 
       {/* Pending Projects - Need Processing */}
-      {pendingProjects.length > 0 && (
+      {filteredPending.length > 0 && (
         <div className="space-y-4">
           <h4 className="text-md font-semibold text-gray-800 flex items-center gap-2">
             <span className="px-2 py-1 bg-orange-100 text-orange-800 rounded text-xs font-bold">
               PENDING PROCESSING
             </span>
             <span className="text-gray-500 text-sm">
-              ({pendingProjects.length} project{pendingProjects.length !== 1 ? 's' : ''})
+              ({filteredPending.length} project{filteredPending.length !== 1 ? 's' : ''})
             </span>
           </h4>
 
           <div className="bg-white rounded-lg shadow border-l-4 border-orange-500">
             <div className="divide-y">
-              {pendingProjects.map((project) => {
+              {filteredPending.map((project) => {
                 const key = `${project.environment}-${project.projectId}`;
                 const deleteKey = `delete-${project.environment}-${project.projectId}`;
                 const isLoading = actionLoading === key;
@@ -241,8 +325,8 @@ export function ProjectsList() {
                           <span className="font-medium text-gray-900">
                             {project.projectName}
                           </span>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(project.status)}`}>
-                            {project.status}
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getDisplayStatus(project).color}`}>
+                            {getDisplayStatus(project).text}
                           </span>
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                             project.environment === 'prod' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
@@ -346,19 +430,34 @@ export function ProjectsList() {
               </div>
 
               <div className="divide-y">
-                {orgProjects.map((project) => (
-                  <Link
-                    key={project.projectId}
-                    href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=prod`}
-                    className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <FolderOpen className="h-5 w-5 text-green-500" />
-                      <span className="font-mono text-sm text-gray-800 dark:text-gray-100">{project.projectId}</span>
-                    </div>
-                    <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
-                  </Link>
-                ))}
+                {orgProjects.map((project) => {
+                  const statusInfo = getDisplayStatus(project);
+                  return (
+                    <Link
+                      key={project.projectId}
+                      href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=prod`}
+                      className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <FolderOpen className="h-5 w-5 text-green-500" />
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {project.projectName || project.projectId}
+                          </span>
+                          <span className="font-mono text-xs text-gray-500 dark:text-gray-400">
+                            {project.projectId}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusInfo.color}`}>
+                          {statusInfo.text}
+                        </span>
+                        <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           ))
@@ -396,19 +495,34 @@ export function ProjectsList() {
               </div>
 
               <div className="divide-y">
-                {orgProjects.map((project) => (
-                  <Link
-                    key={project.projectId}
-                    href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=dev`}
-                    className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <FolderOpen className="h-5 w-5 text-yellow-500" />
-                      <span className="font-mono text-sm text-gray-800 dark:text-gray-100">{project.projectId}</span>
-                    </div>
-                    <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
-                  </Link>
-                ))}
+                {orgProjects.map((project) => {
+                  const statusInfo = getDisplayStatus(project);
+                  return (
+                    <Link
+                      key={project.projectId}
+                      href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=dev`}
+                      className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <FolderOpen className="h-5 w-5 text-yellow-500" />
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {project.projectName || project.projectId}
+                          </span>
+                          <span className="font-mono text-xs text-gray-500 dark:text-gray-400">
+                            {project.projectId}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusInfo.color}`}>
+                          {statusInfo.text}
+                        </span>
+                        <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           ))

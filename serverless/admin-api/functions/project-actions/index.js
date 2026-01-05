@@ -31,6 +31,34 @@ async function getUserEmail(userId) {
 }
 
 /**
+ * Get all admin emails from Cognito admin group
+ */
+async function getAdminEmails() {
+  try {
+    const userPoolId = process.env.COGNITO_USER_POOL_ID;
+    if (!userPoolId) return [];
+
+    const response = await cognito.listUsersInGroup({
+      UserPoolId: userPoolId,
+      GroupName: 'admin',
+      Limit: 60,
+    }).promise();
+
+    const emails = [];
+    for (const user of response.Users || []) {
+      const emailAttr = user.Attributes?.find(attr => attr.Name === 'email');
+      if (emailAttr?.Value) {
+        emails.push(emailAttr.Value);
+      }
+    }
+    return emails;
+  } catch (error) {
+    console.error('Failed to get admin emails', error);
+    return [];
+  }
+}
+
+/**
  * Get project details from DynamoDB
  */
 async function getProjectDetails(projectId, env) {
@@ -201,24 +229,32 @@ async function handleRelease(orgId, projectId, env) {
   }).promise();
   archivedFiles.push(`s3://${TRAINING_BUCKET}/${trainingPrefix}/metadata.json`);
 
-  // Update DynamoDB to mark project as released
-  // Note: We set the entire stages.thermo_report object because it may not exist yet
   const projectsTable = `solar-projects-${env}`;
   const timestampEpoch = Math.floor(Date.now() / 1000);
+
+  // Merge existing stages (older projects might not have a map here)
+  const existingProject = await getProjectDetails(projectId, env);
+  const existingStages = (existingProject && typeof existingProject.stages === 'object') ? existingProject.stages : {};
+  const mergedStages = {
+    ...existingStages,
+    thermo_report: {
+      status: 'COMPLETED',
+      released_at: timestampEpoch,
+    },
+  };
+
+  // Update DynamoDB to mark project as released
   await dynamodb.update({
     TableName: projectsTable,
     Key: {
       PK: `PROJECT#${projectId}`,
       SK: 'METADATA'
     },
-    UpdateExpression: 'SET released_at = :released_at, is_released = :released, stages.thermo_report = :thermo_report',
+    UpdateExpression: 'SET released_at = :released_at, is_released = :released, stages = :stages',
     ExpressionAttributeValues: {
       ':released_at': timestampEpoch,
       ':released': true,
-      ':thermo_report': {
-        status: 'COMPLETED',
-        released_at: timestampEpoch
-      }
+      ':stages': mergedStages,
     }
   }).promise();
   console.log('Updated DynamoDB with released_at and thermo_report.status:', timestampEpoch);
@@ -301,19 +337,22 @@ exports.handler = async (event) => {
     if (actionType === 'release') {
       const result = await handleRelease(orgId, projectId, env);
 
-      // Send email notification to user on release
+      // Send email notification to user and admins on release
       const project = await getProjectDetails(projectId, env);
-      if (project && project.user_id) {
-        const userEmail = await getUserEmail(project.user_id);
-        if (userEmail) {
-          sendEmail(userEmail, 'projectReleased', {
-            projectId,
-            projectName: project.project_name || projectId,
-          }).catch(err => console.error('Release email notification failed', err));
-          console.log(`Sent project release email to ${userEmail}`);
-        } else {
-          console.log(`Could not find email for user ${project.user_id}, skipping release notification`);
-        }
+      const userEmail = project?.user_id ? await getUserEmail(project.user_id) : null;
+      const adminEmails = await getAdminEmails();
+
+      // Combine all recipients (user + admins), removing duplicates
+      const allRecipients = [...new Set([userEmail, ...adminEmails].filter(Boolean))];
+
+      if (allRecipients.length > 0) {
+        sendEmail(allRecipients, 'projectReleased', {
+          projectId,
+          projectName: project?.project_name || projectId,
+        }).catch(err => console.error('Release email notification failed', err));
+        console.log(`Sent project release email to ${allRecipients.join(', ')}`);
+      } else {
+        console.log(`No recipients found for release notification`);
       }
 
       return jsonResponse(200, result);
@@ -322,6 +361,102 @@ exports.handler = async (event) => {
     if (actionType === 'delete') {
       const result = await handleDelete(orgId, projectId, env);
       return jsonResponse(200, result);
+    }
+
+    if (actionType === 'release-error') {
+      // Mark project as released with error status in DynamoDB
+      const projectsTable = `solar-projects-${env}`;
+      const timestampEpoch = Math.floor(Date.now() / 1000);
+
+      // Merge existing stages safely (older projects may not have a map)
+      const existingProject = await getProjectDetails(projectId, env);
+      const existingStages = (existingProject && typeof existingProject.stages === 'object') ? existingProject.stages : {};
+      const mergedStages = {
+        ...existingStages,
+        thermo_report: {
+          status: 'FAILED',
+          released_at: timestampEpoch,
+          error: true
+        }
+      };
+
+      await dynamodb.update({
+        TableName: projectsTable,
+        Key: {
+          PK: `PROJECT#${projectId}`,
+          SK: 'METADATA'
+        },
+        UpdateExpression: 'SET released_at = :released_at, is_released = :released, release_status = :status, stages = :stages',
+        ExpressionAttributeValues: {
+          ':released_at': timestampEpoch,
+          ':released': true,
+          ':status': 'error',
+          ':stages': mergedStages,
+        }
+      }).promise();
+
+      // Send error notification email to user and admins
+      const project = await getProjectDetails(projectId, env);
+      const userEmail = project?.user_id ? await getUserEmail(project.user_id) : null;
+      const adminEmails = await getAdminEmails();
+
+      const allRecipients = [...new Set([userEmail, ...adminEmails].filter(Boolean))];
+
+      if (allRecipients.length > 0) {
+        sendEmail(allRecipients, 'projectReleasedWithError', {
+          projectId,
+          projectName: project?.project_name || projectId,
+        }).catch(err => console.error('Release error email notification failed', err));
+        console.log(`Sent project release error email to ${allRecipients.join(', ')}`);
+      }
+
+      return jsonResponse(200, {
+        success: true,
+        message: 'Project released with error notification sent',
+        released_at: new Date(timestampEpoch * 1000).toISOString(),
+      });
+    }
+
+    if (actionType === 'recompile-tex') {
+      // Submit batch job to recompile TeX without regenerating the full report
+      if (!jobQueue || !reportJobDefinition) {
+        return errorResponse(500, 'Report job configuration missing');
+      }
+
+      // Get project details for report metadata
+      const project = await getProjectDetails(projectId, env);
+      const projectName = project?.project_name || 'Solar Farm';
+
+      // Get user email for client name in report
+      let userEmail = '';
+      if (project?.user_id) {
+        userEmail = await getUserEmail(project.user_id) || '';
+      }
+
+      const response = await batch
+        .submitJob({
+          jobName: `recompile-tex-${projectId}-${Date.now()}`,
+          jobQueue,
+          jobDefinition: reportJobDefinition,
+          containerOverrides: {
+            environment: [
+              { name: 'SOLAR_USER_ID', value: orgId },
+              { name: 'SOLAR_PROJECT_ID', value: projectId },
+              { name: 'ENVIRONMENT', value: env },
+              { name: 'SOLAR_AREA_NAME', value: projectName },
+              { name: 'SOLAR_CLIENT_NAME', value: userEmail },
+              { name: 'SOLAR_COMPILE_ONLY', value: 'true' },  // Skip pipeline, only compile TeX
+            ],
+          },
+        })
+        .promise();
+
+      return jsonResponse(200, {
+        success: true,
+        message: 'TeX recompilation job submitted',
+        jobId: response.jobId,
+        jobName: response.jobName,
+      });
     }
 
     return errorResponse(400, `Unknown action type: ${actionType}`);

@@ -89,13 +89,18 @@ exports.handler = async (event) => {
         polygon: [],
         rotationLine: null,
         isDouble: false,
-        isVertical: false,
+        isHorizontal: false,
         is2H: false,
       };
       let annotations = defaultAnnotations;
       try {
         const storedAnnotations = await readJson(groundtruthBucket, annotationsKey);
         if (storedAnnotations) {
+          // Migrate old isVertical field to isHorizontal
+          if ('isVertical' in storedAnnotations && !('isHorizontal' in storedAnnotations)) {
+            storedAnnotations.isHorizontal = storedAnnotations.isVertical;
+            delete storedAnnotations.isVertical;
+          }
           annotations = storedAnnotations;
         }
       } catch (error) {

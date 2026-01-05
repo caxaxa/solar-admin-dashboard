@@ -17,7 +17,7 @@ interface CropAnnotations {
     end: Point;
   } | null;
   isDouble: boolean;
-  isVertical: boolean;
+  isHorizontal: boolean;
   is2H: boolean;
 }
 
@@ -44,7 +44,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
   const [polygonPoints, setPolygonPoints] = useState<Point[]>([]);
   const [rotationLine, setRotationLine] = useState<{ start: Point; end: Point } | null>(null);
   const [isDouble, setIsDouble] = useState(false);
-  const [isVertical, setIsVertical] = useState(false);
+  const [isHorizontal, setIsHorizontal] = useState(false);
   const [is2H, setIs2H] = useState(false);
 
   // Temporary drawing state
@@ -272,10 +272,10 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
 
       // Load existing annotations
       if (annotations) {
-        const { polygon, rotationLine: line, isDouble: dbl, isVertical: vert, is2H: h2 } = annotations;
+        const { polygon, rotationLine: line, isDouble: dbl, isHorizontal: horiz, is2H: h2 } = annotations;
 
         setIsDouble(dbl);
-        setIsVertical(vert);
+        setIsHorizontal(horiz);
         setIs2H(h2);
 
         if (polygon && polygon.length > 0) {
@@ -548,7 +548,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
         polygon: polygonPoints,
         rotationLine,
         isDouble,
-        isVertical,
+        isHorizontal,
         is2H,
       };
 
@@ -625,6 +625,27 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
       {/* Control panel */}
       <div className="w-80 bg-gray-800 p-4 flex flex-col gap-4 overflow-y-auto">
         <h2 className="text-xl font-bold text-white mb-2">Crop Annotations</h2>
+
+        {/* Save button - at top for easy access */}
+        <div className="pb-4 border-b border-gray-700">
+          <button
+            onClick={saveAnnotations}
+            disabled={saving || polygonPoints.length < 3}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          >
+            {saving ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Save className="h-5 w-5" />
+            )}
+            Save Annotations
+          </button>
+          {polygonPoints.length < 3 && (
+            <p className="text-xs text-yellow-400 mt-2 text-center">
+              Draw a crop polygon to enable saving
+            </p>
+          )}
+        </div>
 
         {/* Tool selection */}
         <div className="space-y-2">
@@ -732,8 +753,8 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
             <label className="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
-                checked={isVertical}
-                onChange={(e) => setIsVertical(e.target.checked)}
+                checked={isHorizontal}
+                onChange={(e) => setIsHorizontal(e.target.checked)}
                 className="w-5 h-5 rounded border-gray-500 text-blue-600 focus:ring-blue-500"
               />
               <span className="text-white">Is Horizontal</span>
@@ -750,26 +771,6 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
           </div>
         </div>
 
-        {/* Save button */}
-        <div className="mt-auto pt-4 border-t border-gray-700">
-          <button
-            onClick={saveAnnotations}
-            disabled={saving || polygonPoints.length < 3}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-          >
-            {saving ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <Save className="h-5 w-5" />
-            )}
-            Save Annotations
-          </button>
-          {polygonPoints.length < 3 && (
-            <p className="text-xs text-yellow-400 mt-2 text-center">
-              Draw a crop polygon to enable saving
-            </p>
-          )}
-        </div>
       </div>
     </div>
   );

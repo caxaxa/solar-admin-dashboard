@@ -4,13 +4,14 @@ AWS SAM-based serverless backend for the Solar Admin Dashboard, providing REST A
 
 ## Overview
 
-This serverless backend consists of 7 Lambda functions behind an API Gateway, handling all backend operations for the admin dashboard:
+This serverless backend consists of multiple Lambda functions behind an API Gateway, handling all backend operations for the admin dashboard:
 
 - **Authentication** - Cognito-based user login and authorization
-- **Project Management** - List and query solar inspection projects
+- **Project Management** - Create, list, and query solar inspection projects
 - **Annotation Storage** - Save and retrieve crop/defect annotations
 - **Batch Orchestration** - Trigger AWS Batch inference and report generation jobs
 - **Status Tracking** - Check project processing status
+- **Email Notifications** - Automated emails via AWS SES for project events
 
 ## Architecture
 
@@ -19,7 +20,8 @@ API Gateway (HTTPS) → Lambda Functions → AWS Services
                                         ├→ S3 (Annotations, Orthophotos)
                                         ├→ Cognito (Authentication)
                                         ├→ DynamoDB (Project Metadata)
-                                        └→ Batch (Job Queue)
+                                        ├→ Batch (Job Queue)
+                                        └→ SES (Email Notifications)
 ```
 
 ## API Endpoints
@@ -28,11 +30,12 @@ API Gateway (HTTPS) → Lambda Functions → AWS Services
 |--------|----------|----------|---------|
 | GET | `/projects` | ProjectsFunction | List all projects across organizations |
 | POST | `/auth/login` | AuthLoginFunction | Authenticate user via Cognito |
+| POST | `/projects/create` | CreateProjectFunction | Create new project (sends email notification) |
 | GET/PUT | `/projects/{orgId}/{projectId}/crop-annotations` | CropAnnotationsFunction | Manage crop annotations |
 | GET/PUT | `/projects/{orgId}/{projectId}/annotations` | DefectAnnotationsFunction | Manage defect annotations |
 | GET | `/projects/{orgId}/{projectId}/status` | ProjectStatusFunction | Get project processing status |
 | POST | `/projects/{orgId}/{projectId}/run-inference` | RunInferenceFunction | Trigger inference batch job |
-| POST | `/projects/{orgId}/{projectId}/actions/{actionType}` | ProjectActionsFunction | Execute project actions (report generation) |
+| POST | `/projects/{orgId}/{projectId}/actions/{actionType}` | ProjectActionsFunction | Execute project actions (report generation, release) |
 
 For detailed API documentation, see [../../docs/API.md](../../docs/API.md).
 
@@ -395,6 +398,78 @@ sam delete --stack-name solar-admin-api-dev
 2. Check user exists in Cognito: `aws cognito-idp list-users --user-pool-id YOUR_POOL_ID`
 3. Verify user is in the `admin` group for admin dashboard access
 4. Check Lambda execution role has Cognito permissions
+
+## Email Notifications
+
+The admin API sends automated email notifications using AWS SES for key project lifecycle events.
+
+### Notification Events
+
+| Event | Trigger | Recipients | Template |
+|-------|---------|------------|----------|
+| **Project Created** | Admin creates a new project | Project owner + All admins | `projectCreated` |
+| **Project Released** | Admin releases a completed report | Project owner + All admins | `projectReleased` |
+
+### How It Works
+
+1. **Sender**: All emails are sent from `noreply@aisol.cloud` (verified in SES)
+2. **Recipients**:
+   - The project owner's email (looked up from Cognito by user ID)
+   - All users in the Cognito `admin` group
+3. **Template System**: HTML and plain-text templates in [functions/send-email/index.js](functions/send-email/index.js)
+
+### Email Templates
+
+**Project Created (`projectCreated`)**
+- Subject: "AiSol - Novo Projeto Criado: {projectName}"
+- Content: Project details, environment badge (prod/dev), link to view project
+
+**Project Released (`projectReleased`)**
+- Subject: "AiSol - Relatorio Pronto: {projectName}"
+- Content: Success message, project details, download link
+
+### Configuration
+
+Email notifications require:
+
+1. **AWS SES Production Access**: Enabled to send to any email address (not just verified)
+2. **Verified Domain**: `aisol.cloud` domain is verified in SES
+3. **Cognito User Pool**: Used to look up user emails and admin group members
+
+### Files
+
+- **Email sender**: [functions/send-email/index.js](functions/send-email/index.js)
+- **Create project (sends email)**: [functions/create-project/index.js](functions/create-project/index.js)
+- **Project actions (sends on release)**: [functions/project-actions/index.js](functions/project-actions/index.js)
+
+### Adding New Admin Recipients
+
+To receive email notifications, add users to the `admin` group in Cognito:
+
+```bash
+aws cognito-idp admin-add-user-to-group \
+  --user-pool-id us-east-2_a98WW3Z3T \
+  --username USER_ID \
+  --group-name admin \
+  --region us-east-2
+```
+
+### Troubleshooting Email Issues
+
+1. **Check SES sending status**:
+   ```bash
+   aws sesv2 get-account --region us-east-2
+   ```
+   Ensure `ProductionAccessEnabled: true`
+
+2. **View email logs** in CloudWatch:
+   ```bash
+   aws logs tail /aws/lambda/solar-admin-api-prod-CreateProjectFunction-* --since 1h --region us-east-2 | grep -i email
+   ```
+
+3. **Common errors**:
+   - "Email address is not verified" → SES is in sandbox mode, request production access
+   - "Could not find email for user" → User doesn't have email attribute in Cognito
 
 ## Security Considerations
 

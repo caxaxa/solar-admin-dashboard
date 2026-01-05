@@ -157,6 +157,7 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:Scan
+                - dynamodb:BatchGetItem
               Resource:
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
@@ -339,6 +340,7 @@ Resources:
             - Effect: Allow
               Action:
                 - cognito-idp:ListUsers
+                - cognito-idp:ListUsersInGroup
               Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
             - Effect: Allow
               Action:
@@ -381,6 +383,7 @@ Resources:
             - Effect: Allow
               Action:
                 - cognito-idp:ListUsers
+                - cognito-idp:ListUsersInGroup
               Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
             - Effect: Allow
               Action:
@@ -535,6 +538,36 @@ Resources:
             ApiId: !Ref AdminHttpApi
             Path: /s3/presigned-url
             Method: GET
+
+  TexContentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: tex-content/index.handler
+      Timeout: 30
+      MemorySize: 512
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${ReportsBucketDev}/*
+                - !Sub arn:aws:s3:::${ReportsBucketProd}/*
+      Events:
+        Get:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/tex-content
+            Method: GET
+        Put:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/tex-content
+            Method: PUT
 
   ModelRegistryFunction:
     Type: AWS::Serverless::Function

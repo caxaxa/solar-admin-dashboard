@@ -18,6 +18,9 @@ import {
   Eye,
   ExternalLink,
   Thermometer,
+  AlertTriangle,
+  Code,
+  RefreshCw,
 } from 'lucide-react';
 import { buildApiUrl } from '@/lib/api-client';
 
@@ -35,6 +38,7 @@ interface ProjectStatus {
   hasReport: boolean;
   isReleased?: boolean;
   reportFullUrl?: string | null;
+  hasTexEdit?: boolean;
 }
 
 export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
@@ -125,6 +129,11 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       thermalReviewHref: status?.hasReport
         ? `/annotate/thermal?orgId=${orgId}&projectId=${projectId}&env=${env}`
         : undefined,
+      // TeX editing features
+      texEditHref: status?.hasReport
+        ? `/annotate/tex?orgId=${orgId}&projectId=${projectId}&env=${env}`
+        : undefined,
+      recompileTexAction: status?.hasTexEdit ? 'recompile-tex' : undefined,
     },
     {
       id: 'release',
@@ -134,6 +143,9 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       complete: status?.isReleased || false,
       actionLabel: status?.isReleased ? 'Released' : 'Release',
       actionType: status?.isReleased ? undefined : 'release',
+      // Additional error release action
+      errorActionLabel: 'Release with Error',
+      errorActionType: status?.isReleased ? undefined : 'release-error',
     },
   ];
 
@@ -298,6 +310,31 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
                     Thermal Review
                   </Link>
                 )}
+                {stage.texEditHref && (
+                  <Link
+                    href={stage.texEditHref}
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                    title="Edit the LaTeX source for this report"
+                  >
+                    <Code className="h-4 w-4" />
+                    Edit TeX
+                  </Link>
+                )}
+                {stage.recompileTexAction && (
+                  <button
+                    onClick={() => handleAction(stage.recompileTexAction!)}
+                    disabled={actionLoading === stage.recompileTexAction}
+                    className="flex items-center gap-2 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors disabled:opacity-50"
+                    title="Recompile PDF from edited TeX (without regenerating data)"
+                  >
+                    {actionLoading === stage.recompileTexAction ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    Recompile TeX
+                  </button>
+                )}
                 {stage.actionType && (
                   <button
                     onClick={() => handleAction(stage.actionType!)}
@@ -310,6 +347,21 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
                       <Play className="h-4 w-4" />
                     )}
                     {stage.actionLabel}
+                  </button>
+                )}
+                {stage.errorActionType && (
+                  <button
+                    onClick={() => handleAction(stage.errorActionType!)}
+                    disabled={actionLoading === stage.errorActionType}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                    title="Release project with error notification to client"
+                  >
+                    {actionLoading === stage.errorActionType ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4" />
+                    )}
+                    {stage.errorActionLabel}
                   </button>
                 )}
               </div>
