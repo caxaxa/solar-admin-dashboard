@@ -46,7 +46,8 @@ exports.handler = async (event) => {
     const fileId = ulid();
 
     // S3 key path - use 'images/' to match user app (not 'raw/')
-    const s3Key = `${orgId}/projects/${projectId}/images/${fileId}_${filename}`;
+    // Use original filename only - no UUID prefix - to match reconstruction.json names from ODM
+    const s3Key = `${orgId}/projects/${projectId}/images/${filename}`;
 
     // Generate presigned URL for PUT
     // Note: We don't include Metadata in the signed URL to simplify browser uploads.
