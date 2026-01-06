@@ -295,7 +295,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
       scrollTop: containerRef.current.scrollTop,
     };
 
-    // Change cursor to grabbing
+    // Change cursor to grabbing while panning
     containerRef.current.style.cursor = 'grabbing';
   }, [pointMode]);
 
@@ -316,7 +316,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
 
   const handleMouseUp = useCallback(() => {
     if (containerRef.current && !pointMode) {
-      containerRef.current.style.cursor = 'grab';
+      containerRef.current.style.cursor = 'default';
     }
     // Delay resetting isPanning so click handler can check it
     setTimeout(() => {
@@ -327,7 +327,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
 
   const handleMouseLeave = useCallback(() => {
     if (containerRef.current && !pointMode) {
-      containerRef.current.style.cursor = 'grab';
+      containerRef.current.style.cursor = 'default';
     }
     panStartRef.current = null;
     setIsPanning(false);
@@ -424,7 +424,28 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const delta = e.deltaY > 0 ? 0.9 : 1.1; // Scroll down = zoom out, scroll up = zoom in
-      setZoom((z) => Math.max(0.5, Math.min(4, z * delta)));
+
+      // Get mouse position relative to container
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Calculate the point in the image that the mouse is over (in image coordinates)
+      const imageX = (container.scrollLeft + mouseX) / zoom;
+      const imageY = (container.scrollTop + mouseY) / zoom;
+
+      setZoom((prevZoom) => {
+        const newZoom = Math.max(0.5, Math.min(4, prevZoom * delta));
+
+        // After zoom, adjust scroll so the same image point stays under the mouse
+        // Need to use requestAnimationFrame to ensure zoom state has updated
+        requestAnimationFrame(() => {
+          container.scrollLeft = imageX * newZoom - mouseX;
+          container.scrollTop = imageY * newZoom - mouseY;
+        });
+
+        return newZoom;
+      });
     };
 
     const getTouchDistance = (touches: TouchList): number => {
@@ -466,7 +487,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
       container.removeEventListener('touchmove', handleTouchMove);
       container.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [loading, manifest]); // Re-run when loading completes or manifest changes
+  }, [loading, manifest, zoom]); // Re-run when loading completes, manifest changes, or zoom changes
 
   // Keyboard navigation
   useEffect(() => {
@@ -631,7 +652,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
         <div
           ref={containerRef}
           className={`flex-1 overflow-auto bg-gray-900 ${
-            pointMode ? 'cursor-crosshair' : 'cursor-grab'
+            pointMode ? 'cursor-crosshair' : 'cursor-default'
           }`}
           onClick={handleImageClick}
           onMouseDown={handleMouseDown}

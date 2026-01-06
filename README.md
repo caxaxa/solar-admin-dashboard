@@ -270,7 +270,7 @@ docker run -p 3000:3000 solar-admin-dashboard
 ## Related Documentation
 
 - [Inference Pipeline Documentation](../solar-detection-model/docs/INFERENCE.md)
-- [Ground Truth Integration](../solar-detection-model/docs/groundtruth/IMPLEMENTATION_SUMMARY.md)
+- Annotation storage uses our in-app tools writing directly to S3 (no SageMaker Ground Truth; legacy docs are retained only for history)
 - [Detectron2 Setup](../solar-detection-model/solar_detectron2/README.md)
 - [Main Web App](../solar-web-app/README.md)
 
