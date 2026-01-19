@@ -77,7 +77,10 @@ exports.handler = async (event) => {
     }
 
     // Calculate totals
-    const totalSizeBytes = completedFiles.reduce((sum, f) => sum + (f.file_size || 0), 0);
+    const totalSizeBytes = completedFiles.reduce(
+      (sum, f) => sum + getFileSizeBytes(f),
+      0
+    );
     const totalSizeMb = totalSizeBytes / (1024 * 1024);
 
     // Detect image type from filenames (thermal images usually have "thermal" or "IR" in name)
@@ -112,7 +115,7 @@ exports.handler = async (event) => {
         file_id: f.file_id,
         filename: f.filename,
         s3_key: f.s3_key,
-        size_bytes: f.file_size || f.size_bytes || 0,
+        size_bytes: getFileSizeBytes(f),
       })),
       created_at: new Date().toISOString(),
     };
@@ -226,20 +229,23 @@ exports.handler = async (event) => {
  * Calculate instance type based on dataset size and image type
  */
 function calculateInstanceType(totalSizeMb, imageType) {
-  // Thermal images need more memory due to 16-bit processing
-  const isHighMemory = imageType === 'thermal';
+  // Align with backend sizing in solar-web-app/services/api/project_api.py
+  const isThermal = imageType === 'thermal';
 
   if (totalSizeMb < 100) {
-    return isHighMemory ? 'm5.2xlarge' : 'm5.xlarge';
+    return isThermal ? 'm5.2xlarge' : 'm5.4xlarge';
   } else if (totalSizeMb < 500) {
-    return isHighMemory ? 'm5.4xlarge' : 'm5.2xlarge';
-  } else if (totalSizeMb < 1000) {
-    return isHighMemory ? 'm5.8xlarge' : 'm5.4xlarge';
-  } else if (totalSizeMb < 2000) {
-    return isHighMemory ? 'm5.12xlarge' : 'm5.8xlarge';
-  } else if (totalSizeMb < 5000) {
-    return isHighMemory ? 'm5.16xlarge' : 'm5.12xlarge';
+    return isThermal ? 'm5.4xlarge' : 'm5.8xlarge';
+  } else if (totalSizeMb < 1500) {
+    return isThermal ? 'm5.8xlarge' : 'm5.12xlarge';
+  } else if (totalSizeMb < 3000) {
+    return isThermal ? 'm5.12xlarge' : 'm5.16xlarge';
   } else {
-    return 'm5.24xlarge';
+    return isThermal ? 'm5.16xlarge' : 'm5.24xlarge';
   }
+}
+
+function getFileSizeBytes(file) {
+  const size = Number(file.file_size ?? file.size_bytes ?? file.size ?? 0);
+  return Number.isFinite(size) ? size : 0;
 }

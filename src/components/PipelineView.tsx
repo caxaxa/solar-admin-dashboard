@@ -81,6 +81,8 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       complete: status?.hasOrthophoto || false,
       actionLabel: status?.hasOrthophoto ? undefined : 'Gerar Relatório',
       actionType: status?.hasOrthophoto ? undefined : 'start-odm',
+      secondaryActionLabel: status?.hasOrthophoto ? 'Reprocessar ODM' : undefined,
+      secondaryActionType: status?.hasOrthophoto ? 'start-odm' : undefined,
     },
     {
       id: 'crop',
@@ -347,6 +349,20 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
                       <Play className="h-4 w-4" />
                     )}
                     {stage.actionLabel}
+                  </button>
+                )}
+                {stage.secondaryActionType && (
+                  <button
+                    onClick={() => handleAction(stage.secondaryActionType!)}
+                    disabled={actionLoading === stage.secondaryActionType}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === stage.secondaryActionType ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    {stage.secondaryActionLabel}
                   </button>
                 )}
                 {stage.errorActionType && (

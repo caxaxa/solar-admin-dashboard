@@ -346,11 +346,15 @@ exports.handler = async (event) => {
       const allRecipients = [...new Set([userEmail, ...adminEmails].filter(Boolean))];
 
       if (allRecipients.length > 0) {
-        sendEmail(allRecipients, 'projectReleased', {
-          projectId,
-          projectName: project?.project_name || projectId,
-        }).catch(err => console.error('Release email notification failed', err));
-        console.log(`Sent project release email to ${allRecipients.join(', ')}`);
+        try {
+          const emailResult = await sendEmail(allRecipients, 'projectReleased', {
+            projectId,
+            projectName: project?.project_name || projectId,
+          });
+          console.log(`Release email result:`, emailResult);
+        } catch (err) {
+          console.error('Release email notification failed', err);
+        }
       } else {
         console.log(`No recipients found for release notification`);
       }
@@ -403,11 +407,15 @@ exports.handler = async (event) => {
       const allRecipients = [...new Set([userEmail, ...adminEmails].filter(Boolean))];
 
       if (allRecipients.length > 0) {
-        sendEmail(allRecipients, 'projectReleasedWithError', {
-          projectId,
-          projectName: project?.project_name || projectId,
-        }).catch(err => console.error('Release error email notification failed', err));
-        console.log(`Sent project release error email to ${allRecipients.join(', ')}`);
+        try {
+          const emailResult = await sendEmail(allRecipients, 'projectReleasedWithError', {
+            projectId,
+            projectName: project?.project_name || projectId,
+          });
+          console.log(`Release error email result:`, emailResult);
+        } catch (err) {
+          console.error('Release error email notification failed', err);
+        }
       }
 
       return jsonResponse(200, {

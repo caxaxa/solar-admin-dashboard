@@ -41,9 +41,9 @@ interface BoundingBox {
 
 const LABELS = [
   { id: 'default_panel', name: 'Default Panel', color: '#22c55e' },
-  { id: 'hotspots', name: 'Hotspots', color: '#ef4444' },
-  { id: 'faultydiodes', name: 'Faulty Diodes', color: '#f97316' },
-  { id: 'offlinepanels', name: 'Offline Panels', color: '#eab308' },
+  { id: 'hotspots', name: 'Células Quentes', color: '#ef4444' },
+  { id: 'faultydiodes', name: 'Diodos Queimados', color: '#f97316' },
+  { id: 'offlinepanels', name: 'Painéis Desligados', color: '#eab308' },
 ];
 
 // Extend Rect to include custom label property

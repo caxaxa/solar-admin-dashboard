@@ -156,7 +156,7 @@ Este e um email automatico, por favor nao responda.
           <strong>Email:</strong> suporte@aisol.cloud
         </div>
         <div class="contact-item">
-          <strong>WhatsApp:</strong> +55 (11) 99999-9999
+          <strong>WhatsApp:</strong> +55 (67) 99699-6672
         </div>
         <div class="contact-item">
           <strong>Horario:</strong> Segunda a Sexta, 9h as 18h
@@ -193,7 +193,7 @@ Isso pode ter ocorrido por diversos motivos, como:
 
 ENTRE EM CONTATO CONOSCO:
 - Email: suporte@aisol.cloud
-- WhatsApp: +55 (11) 99999-9999
+- WhatsApp: +55 (67) 99699-6672
 - Horario: Segunda a Sexta, 9h as 18h
 
 Pedimos desculpas pelo inconveniente e estamos a disposicao para auxiliar.

@@ -47,6 +47,28 @@ export function ProjectsList() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string[]>(['all']);
 
+  // Load persisted filter on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = localStorage.getItem('adminStatusFilter');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setStatusFilter(parsed);
+        }
+      } catch {
+        /* ignore parse errors and keep default */
+      }
+    }
+  }, []);
+
+  // Persist filter changes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem('adminStatusFilter', JSON.stringify(statusFilter));
+  }, [statusFilter]);
+
   const fetchProjects = useCallback(async () => {
     try {
       setLoading(true);

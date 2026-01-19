@@ -21,8 +21,8 @@ import { buildApiUrl } from '@/lib/api-client';
 // Coordinate system constants
 const THERMAL_WIDTH = 640;
 const THERMAL_HEIGHT = 512;
-const VISUAL_WIDTH = 1280;
-const VISUAL_HEIGHT = 1024;
+const DEFAULT_VISUAL_WIDTH = 1280;
+const DEFAULT_VISUAL_HEIGHT = 1024;
 
 // Severity colors
 const SEVERITY_COLORS: Record<string, string> = {
@@ -43,17 +43,38 @@ function getSeverity(deltaT: number): string {
 }
 
 // Coordinate conversion helpers
-function visualToThermal(vx: number, vy: number): { x: number; y: number } {
+// Note: When flight_direction is 'south', the image is displayed rotated 180°
+// Coordinates in the manifest are stored in ROTATED space, so we need to:
+// 1. When clicking on rotated image: rotate click coords 180° before converting to thermal
+// 2. When displaying markers: thermal coords are already in rotated space, just convert to visual
+
+function visualToThermal(
+  vx: number,
+  vy: number,
+  visualWidth: number,
+  visualHeight: number,
+): { x: number; y: number } {
+  // If image is rotated 180°, the click position (vx, vy) is in rotated space
+  // but we need to store in rotated space (matching the manifest), so no extra transform needed
+  // Actually, since the IMAGE is rotated, clicking at (vx, vy) on the rotated image
+  // corresponds to (visualWidth - vx, visualHeight - vy) in the original image coords
+  // But since coordinates are stored in rotated space, we just use vx, vy directly
   return {
-    x: Math.round(vx * THERMAL_WIDTH / VISUAL_WIDTH),
-    y: Math.round(vy * THERMAL_HEIGHT / VISUAL_HEIGHT),
+    x: Math.round(vx * THERMAL_WIDTH / visualWidth),
+    y: Math.round(vy * THERMAL_HEIGHT / visualHeight),
   };
 }
 
-function thermalToVisual(tx: number, ty: number): { x: number; y: number } {
+function thermalToVisual(
+  tx: number,
+  ty: number,
+  visualWidth: number,
+  visualHeight: number,
+): { x: number; y: number } {
+  // Thermal coords are in rotated space (same as display), so no extra transform needed
   return {
-    x: Math.round(tx * VISUAL_WIDTH / THERMAL_WIDTH),
-    y: Math.round(ty * VISUAL_HEIGHT / THERMAL_HEIGHT),
+    x: Math.round(tx * visualWidth / THERMAL_WIDTH),
+    y: Math.round(ty * visualHeight / THERMAL_HEIGHT),
   };
 }
 
@@ -75,6 +96,7 @@ interface AnnotationEntry {
   cold_point: AnnotationPoint;
   delta_t: number;
   severity: string;
+  flight_direction?: string; // 'north', 'south', or null - south means image needs 180° rotation
 }
 
 interface AnnotationManifest {
@@ -113,6 +135,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
   const [currentIndex, setCurrentIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
 
   // Override state - stores modified points per defect
   const [overrides, setOverrides] = useState<Map<string, { hot?: AnnotationPoint; cold?: AnnotationPoint }>>(new Map());
@@ -235,6 +258,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
     if (!currentAnnotation) return;
 
     setImageLoaded(false);
+    setImageSize(null);
     getRawImageUrl(currentAnnotation.raw_image_name)
       .then(setImageUrl)
       .catch((err) => setError(err.message));
@@ -244,18 +268,37 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
 
+  // Check if current annotation needs 180° rotation (south-facing flight)
+  const isRotated = currentAnnotation?.flight_direction === 'south';
+  const visualWidth = imageSize?.width ?? DEFAULT_VISUAL_WIDTH;
+  const visualHeight = imageSize?.height ?? DEFAULT_VISUAL_HEIGHT;
+
+  const handleImageLoad = useCallback(() => {
+    const img = imageRef.current;
+    if (img) {
+      const width = img.naturalWidth || img.width;
+      const height = img.naturalHeight || img.height;
+      if (width && height) {
+        setImageSize({ width, height });
+      }
+    }
+    setImageLoaded(true);
+  }, []);
+
   // Handle click on image to set point
   const handleImageClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     // Don't place point if we were panning
     if (isPanning) return;
-    if (!pointMode || !currentAnnotation || !containerRef.current || !imageRef.current) return;
+    if (!pointMode || !currentAnnotation || !containerRef.current || !imageRef.current || !imageLoaded) return;
 
     const rect = imageRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left) / zoom;
     const y = (e.clientY - rect.top) / zoom;
 
     // Convert to thermal coordinates
-    const thermal = visualToThermal(x, y);
+    // Since the image is displayed rotated and coordinates are stored in rotated space,
+    // we can directly use the click position
+    const thermal = visualToThermal(x, y, visualWidth, visualHeight);
 
     // Clamp to valid range
     thermal.x = Math.max(0, Math.min(THERMAL_WIDTH - 1, thermal.x));
@@ -276,7 +319,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
 
     setHasChanges(true);
     setPointMode(null);
-  }, [pointMode, currentAnnotation, zoom, overrides, isPanning]);
+  }, [pointMode, currentAnnotation, zoom, overrides, isPanning, imageLoaded, visualWidth, visualHeight]);
 
   // Pan handlers - click and hold to pan (only when no point mode is selected)
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -672,9 +715,12 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
                 ref={imageRef}
                 src={imageUrl}
                 alt={currentAnnotation?.raw_image_name}
-                onLoad={() => setImageLoaded(true)}
+                onLoad={handleImageLoad}
                 className="max-w-none"
-                style={{ imageRendering: 'pixelated' }}
+                style={{
+                  imageRendering: 'pixelated',
+                  transform: isRotated ? 'rotate(180deg)' : 'none',
+                }}
               />
 
               {/* Hot point marker */}
@@ -682,8 +728,8 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
                 <div
                   className="absolute pointer-events-none"
                   style={{
-                    left: thermalToVisual(points.hot.x, points.hot.y).x - 15,
-                    top: thermalToVisual(points.hot.x, points.hot.y).y - 15,
+                    left: thermalToVisual(points.hot.x, points.hot.y, visualWidth, visualHeight).x - 15,
+                    top: thermalToVisual(points.hot.x, points.hot.y, visualWidth, visualHeight).y - 15,
                   }}
                 >
                   <div className="w-[30px] h-[30px] border-2 border-red-500 rounded-full flex items-center justify-center">
@@ -700,8 +746,8 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
                 <div
                   className="absolute pointer-events-none"
                   style={{
-                    left: thermalToVisual(points.cold.x, points.cold.y).x - 15,
-                    top: thermalToVisual(points.cold.x, points.cold.y).y - 15,
+                    left: thermalToVisual(points.cold.x, points.cold.y, visualWidth, visualHeight).x - 15,
+                    top: thermalToVisual(points.cold.x, points.cold.y, visualWidth, visualHeight).y - 15,
                   }}
                 >
                   <div className="w-[30px] h-[30px] border-2 border-blue-500 rounded-full flex items-center justify-center">
@@ -731,6 +777,12 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
                   <p className="text-xs text-gray-500 truncate" title={currentAnnotation.raw_image_name}>
                     Image: {currentAnnotation.raw_image_name}
                   </p>
+                  {isRotated && (
+                    <p className="text-xs text-amber-400 flex items-center gap-1">
+                      <RotateCcw className="w-3 h-3" />
+                      Image rotated 180° (south-facing flight)
+                    </p>
+                  )}
                 </div>
               </div>
 

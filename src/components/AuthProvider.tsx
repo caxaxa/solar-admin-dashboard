@@ -16,6 +16,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
+  const IDLE_LIMIT_MS = 60 * 60 * 1000; // 1 hour
 
   useEffect(() => {
     const checkAuth = () => {
@@ -49,6 +50,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     checkAuth();
   }, [pathname, router]);
+
+  useEffect(() => {
+    if (pathname === '/login' || !user) {
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout>;
+
+    const logout = () => {
+      localStorage.clear();
+      setUser(null);
+      router.push('/login');
+    };
+
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(logout, IDLE_LIMIT_MS);
+    };
+
+    const events: (keyof WindowEventMap)[] = ['mousemove', 'keydown', 'click', 'touchstart'];
+    events.forEach((event) => window.addEventListener(event, resetTimer));
+    resetTimer();
+
+    return () => {
+      clearTimeout(timer);
+      events.forEach((event) => window.removeEventListener(event, resetTimer));
+    };
+  }, [pathname, router, user]);
 
   // Don't show loading spinner on login page
   if (pathname === '/login') {
