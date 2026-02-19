@@ -34,9 +34,33 @@ function getJobResources(env) {
   };
 }
 
+function getELBucketConfig(env) {
+  const normalized = normalizeEnv(env);
+  return {
+    env: normalized,
+    uploadsBucket:
+      process.env[`EL_UPLOADS_BUCKET_${normalized.toUpperCase()}`] || '',
+    groundtruthBucket:
+      process.env[`EL_GROUNDTRUTH_BUCKET_${normalized.toUpperCase()}`] || '',
+    reportsBucket:
+      process.env[`EL_REPORTS_BUCKET_${normalized.toUpperCase()}`] || '',
+  };
+}
+
+function getELJobResources(env) {
+  const normalized = normalizeEnv(env);
+  return {
+    jobQueue: process.env[`JOB_QUEUE_${normalized.toUpperCase()}`] || '',
+    reportJobDefinition:
+      process.env[`EL_REPORT_JOB_DEF_${normalized.toUpperCase()}`] || '',
+  };
+}
+
 module.exports = {
   normalizeEnv,
   getBucketConfig,
   getProjectsTable,
   getJobResources,
+  getELBucketConfig,
+  getELJobResources,
 };

@@ -1,28 +1,61 @@
 const { dynamodb, cognito } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getProjectsTable } = require('../shared/env');
 const { ulid } = require('ulid');
 const { sendEmail } = require('../send-email');
 
+function looksLikeEmail(value) {
+  return typeof value === 'string' && value.includes('@');
+}
+
+async function findUserByFilter(userPoolId, filter) {
+  const response = await cognito.listUsers({
+    UserPoolId: userPoolId,
+    Filter: filter,
+    Limit: 1,
+  }).promise();
+
+  if (response.Users && response.Users.length > 0) {
+    return response.Users[0];
+  }
+  return null;
+}
+
 /**
- * Get user email from Cognito by user ID (sub)
+ * Get user email from Cognito by user ID (sub) or username/email fallback.
  */
 async function getUserEmail(userId) {
   try {
     const userPoolId = process.env.COGNITO_USER_POOL_ID;
-    if (!userPoolId) return null;
+    if (!userPoolId || !userId) return null;
 
-    // List users with filter by sub
-    const response = await cognito.listUsers({
-      UserPoolId: userPoolId,
-      Filter: `sub = "${userId}"`,
-      Limit: 1,
-    }).promise();
-
-    if (response.Users && response.Users.length > 0) {
-      const emailAttr = response.Users[0].Attributes?.find(attr => attr.Name === 'email');
-      return emailAttr?.Value || null;
+    if (looksLikeEmail(userId)) {
+      return userId;
     }
+
+    const filters = [
+      `sub = "${userId}"`,
+      `username = "${userId}"`,
+      `email = "${userId}"`,
+    ];
+
+    for (const filter of filters) {
+      let user = null;
+      try {
+        user = await findUserByFilter(userPoolId, filter);
+      } catch (err) {
+        console.warn('User lookup failed for filter', { filter, error: err.message });
+        continue;
+      }
+
+      if (user) {
+        const emailAttr = user.Attributes?.find(attr => attr.Name === 'email');
+        if (emailAttr?.Value) {
+          return emailAttr.Value;
+        }
+      }
+    }
+
     return null;
   } catch (error) {
     console.error('Failed to get user email', error);
@@ -63,6 +96,7 @@ async function getAdminEmails() {
  * This allows admins to create projects when they collect images instead of the user.
  */
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = (event.requestContext?.http?.method || 'GET').toUpperCase();
 
   if (method === 'OPTIONS') {
@@ -150,7 +184,10 @@ exports.handler = async (event) => {
         console.error('Email notification failed:', emailErr.message, emailErr.stack);
       }
     } else {
-      console.log(`No recipients found for user ${userId}, skipping notification`);
+      console.log(`No recipients found for user ${userId}, skipping notification`, {
+        userEmail,
+        adminCount: adminEmails.length,
+      });
     }
 
     return jsonResponse(200, {

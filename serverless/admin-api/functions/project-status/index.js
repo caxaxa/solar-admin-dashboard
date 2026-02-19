@@ -1,4 +1,4 @@
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getBucketConfig } = require('../shared/env');
 const { objectExists, getSignedGetUrl } = require('../shared/s3-utils');
 
@@ -13,6 +13,7 @@ function getPathParams(event) {
 }
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   if ((event.requestContext?.http?.method || '').toUpperCase() === 'OPTIONS') {
     return preflightResponse();
   }

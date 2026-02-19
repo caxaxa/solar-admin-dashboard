@@ -6,7 +6,7 @@
  */
 
 const { s3 } = require('../shared/aws-clients');
-const { ok, badRequest, serverError } = require('../shared/http');
+const { ok, badRequest, serverError, setRequestEvent } = require('../shared/http');
 
 // Allowed buckets for security - only permit access to these
 const ALLOWED_BUCKETS = new Set([
@@ -25,6 +25,7 @@ const ALLOWED_BUCKETS = new Set([
 ]);
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   try {
     const params = event.queryStringParameters || {};
     const { bucket, key, operation, contentType } = params;

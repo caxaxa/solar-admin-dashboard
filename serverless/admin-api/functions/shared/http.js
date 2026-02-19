@@ -1,14 +1,36 @@
-const defaultHeaders = {
-  'Content-Type': 'application/json',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': '*',
-  'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS',
-};
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// Module-level request event — set via setRequestEvent() at handler entry.
+// Lambda runs one request at a time per instance, so this is safe.
+let _currentEvent = null;
+
+function setRequestEvent(event) {
+  _currentEvent = event;
+}
+
+function getCorsOrigin() {
+  const origin = _currentEvent?.headers?.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  if (origin.startsWith('http://localhost:')) return origin;
+  return ALLOWED_ORIGINS[0] || '';
+}
+
+function corsHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': getCorsOrigin(),
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Request-ID',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+  };
+}
 
 function preflightResponse() {
   return {
     statusCode: 204,
-    headers: defaultHeaders,
+    headers: corsHeaders(),
     body: '',
   };
 }
@@ -16,7 +38,7 @@ function preflightResponse() {
 function jsonResponse(statusCode, body) {
   return {
     statusCode,
-    headers: defaultHeaders,
+    headers: corsHeaders(),
     body: JSON.stringify(body),
   };
 }
@@ -42,10 +64,11 @@ function serverError(message, details) {
 }
 
 module.exports = {
+  setRequestEvent,
   jsonResponse,
   errorResponse,
   preflightResponse,
-  defaultHeaders,
+  corsHeaders,
   ok,
   badRequest,
   serverError,

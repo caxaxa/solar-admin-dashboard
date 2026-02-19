@@ -1,4 +1,4 @@
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getBucketConfig } = require('../shared/env');
 const {
   readJson,
@@ -35,6 +35,7 @@ function parseBody(event) {
 }
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = event.requestContext?.http?.method || 'GET';
   if (method === 'OPTIONS') {
     return preflightResponse();

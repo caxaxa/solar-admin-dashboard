@@ -1,5 +1,5 @@
 const { batch } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getJobResources } = require('../shared/env');
 
 function getPathParams(event) {
@@ -11,6 +11,7 @@ function getPathParams(event) {
 }
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = (event.requestContext?.http?.method || 'GET').toUpperCase();
   if (method === 'OPTIONS') {
     return preflightResponse();

@@ -1,28 +1,62 @@
 const { batch, s3, dynamodb, cognito } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getJobResources } = require('../shared/env');
 const { sendEmail } = require('../send-email');
 
 const TRAINING_BUCKET = 'solar-ai-training';
 
+function looksLikeEmail(value) {
+  return typeof value === 'string' && value.includes('@');
+}
+
+async function findUserByFilter(userPoolId, filter) {
+  const response = await cognito.listUsers({
+    UserPoolId: userPoolId,
+    Filter: filter,
+    Limit: 1,
+  }).promise();
+
+  if (response.Users && response.Users.length > 0) {
+    return response.Users[0];
+  }
+  return null;
+}
+
 /**
- * Get user email from Cognito by user ID (sub)
+ * Get user email from Cognito by user ID (sub) or username/email fallback.
  */
 async function getUserEmail(userId) {
   try {
     const userPoolId = process.env.COGNITO_USER_POOL_ID;
-    if (!userPoolId) return null;
+    if (!userPoolId || !userId) return null;
 
-    const response = await cognito.listUsers({
-      UserPoolId: userPoolId,
-      Filter: `sub = "${userId}"`,
-      Limit: 1,
-    }).promise();
-
-    if (response.Users && response.Users.length > 0) {
-      const emailAttr = response.Users[0].Attributes?.find(attr => attr.Name === 'email');
-      return emailAttr?.Value || null;
+    if (looksLikeEmail(userId)) {
+      return userId;
     }
+
+    const filters = [
+      `sub = "${userId}"`,
+      `username = "${userId}"`,
+      `email = "${userId}"`,
+    ];
+
+    for (const filter of filters) {
+      let user = null;
+      try {
+        user = await findUserByFilter(userPoolId, filter);
+      } catch (err) {
+        console.warn('User lookup failed for filter', { filter, error: err.message });
+        continue;
+      }
+
+      if (user) {
+        const emailAttr = user.Attributes?.find(attr => attr.Name === 'email');
+        if (emailAttr?.Value) {
+          return emailAttr.Value;
+        }
+      }
+    }
+
     return null;
   } catch (error) {
     console.error('Failed to get user email', error);
@@ -159,9 +193,11 @@ async function handleDelete(orgId, projectId, env) {
   };
 }
 
-async function handleRelease(orgId, projectId, env) {
+async function handleRelease(orgId, projectId, env, releaseMode = 'paywall') {
   const orthosBucket = `solar-orthos-${env}`;
   const groundtruthBucket = `solar-groundtruth-${env}`;
+  const normalizedReleaseMode = releaseMode === 'free' ? 'free' : 'paywall';
+  const paywallBypass = normalizedReleaseMode === 'free';
 
   const tifKey = `${orgId}/projects/${projectId}/odm_orthophoto/odm_orthophoto_1.6cm.tif`;
   const labelsKey = `${orgId}/projects/${projectId}/groundtruth/defect_labels.json`;
@@ -213,6 +249,8 @@ async function handleRelease(orgId, projectId, env) {
     org_id: orgId,
     project_id: projectId,
     environment: env,
+    release_mode: normalizedReleaseMode,
+    paywall_bypass: paywallBypass,
     released_at: timestamp,
     source_files: {
       orthophoto: `s3://${orthosBucket}/${tifKey}`,
@@ -250,20 +288,24 @@ async function handleRelease(orgId, projectId, env) {
       PK: `PROJECT#${projectId}`,
       SK: 'METADATA'
     },
-    UpdateExpression: 'SET released_at = :released_at, is_released = :released, stages = :stages',
+    UpdateExpression: 'SET released_at = :released_at, is_released = :released, stages = :stages, release_mode = :release_mode, paywall_bypass = :paywall_bypass',
     ExpressionAttributeValues: {
       ':released_at': timestampEpoch,
       ':released': true,
       ':stages': mergedStages,
+      ':release_mode': normalizedReleaseMode,
+      ':paywall_bypass': paywallBypass,
     }
   }).promise();
   console.log('Updated DynamoDB with released_at and thermo_report.status:', timestampEpoch);
 
   return {
     success: true,
-    message: 'Project released successfully',
+    message: paywallBypass ? 'Project released for free (paywall bypass enabled)' : 'Project released successfully',
     training_data_archived: true,
     archived_files: archivedFiles,
+    release_mode: normalizedReleaseMode,
+    paywall_bypass: paywallBypass,
     released_at: timestamp,
   };
 }
@@ -278,6 +320,7 @@ function getPathParams(event) {
 }
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = (event.requestContext?.http?.method || 'GET').toUpperCase();
   if (method === 'OPTIONS') {
     return preflightResponse();
@@ -335,7 +378,9 @@ exports.handler = async (event) => {
     }
 
     if (actionType === 'release') {
-      const result = await handleRelease(orgId, projectId, env);
+      const releaseModeRaw = String(event.queryStringParameters?.release_mode || 'paywall').toLowerCase();
+      const releaseMode = releaseModeRaw === 'free' ? 'free' : 'paywall';
+      const result = await handleRelease(orgId, projectId, env, releaseMode);
 
       // Send email notification to user and admins on release
       const project = await getProjectDetails(projectId, env);

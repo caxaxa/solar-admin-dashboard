@@ -1,5 +1,5 @@
 const { s3, dynamodb } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getProjectsTable } = require('../shared/env');
 
 const UPLOADS_BUCKET_DEV = 'solar-uploads-dev';
@@ -13,6 +13,7 @@ function getUploadsBucket(env) {
  * Mark a file upload as completed and optionally finalize the project upload.
  */
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = (event.requestContext?.http?.method || 'GET').toUpperCase();
 
   if (method === 'OPTIONS') {

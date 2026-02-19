@@ -2,12 +2,17 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, FolderKanban, Settings, Sun, Cpu } from 'lucide-react';
+import { Home, FolderKanban, Settings, Sun, Cpu, Zap } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: Home },
-  { href: '/projects', label: 'Projects', icon: FolderKanban },
-  { href: '/model', label: 'AI Model', icon: Cpu },
+  // Thermographic
+  { href: '/thermographic/projects', label: 'Thermographic Projects', icon: FolderKanban },
+  { href: '/thermographic/model', label: 'Thermographic AI Model', icon: Cpu },
+  // Electroluminescence
+  { href: '/el/projects', label: 'EL Projects', icon: Zap },
+  { href: '/el/model', label: 'EL AI Model', icon: Cpu },
+  // Settings
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -24,7 +29,7 @@ export function Sidebar() {
       <nav className="space-y-2">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href;
+          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
 
           return (
             <Link

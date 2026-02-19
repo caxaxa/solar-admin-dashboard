@@ -5,10 +5,11 @@ const ddb = new AWS.DynamoDB.DocumentClient();
 const s3 = new AWS.S3();
 const batch = new AWS.Batch();
 
+const ENV = process.env.ENVIRONMENT || 'dev';
 const TRAINING_DATA_BUCKET = process.env.TRAINING_DATA_BUCKET || 'solar-ai-training';
-const MODEL_REGISTRY_TABLE = process.env.MODEL_REGISTRY_TABLE || 'solar-model-registry-prod';
+const MODEL_REGISTRY_TABLE = process.env.MODEL_REGISTRY_TABLE || `solar-model-registry-${ENV}`;
 const PROD_POINTER_PK = process.env.MODEL_REGISTRY_PROD_POINTER_PK || 'MODEL#PROD_POINTER';
-const RETRAIN_JOB_QUEUE = process.env.RETRAIN_JOB_QUEUE || 'solar-job-queue-prod';
+const RETRAIN_JOB_QUEUE = process.env.RETRAIN_JOB_QUEUE || `solar-job-queue-${ENV}`;
 const RETRAIN_JOB_DEFINITION =
   process.env.RETRAIN_JOB_DEFINITION || 'solar-detectron2-training-gpu:1';
 const COCO_JOB_QUEUE = process.env.COCO_JOB_QUEUE || RETRAIN_JOB_QUEUE;
@@ -21,20 +22,36 @@ const DEFAULT_CHECKPOINT_EPOCHS = parseInt(process.env.RETRAIN_CHECKPOINT_EPOCHS
 const DEFAULT_EVAL_EPOCHS = parseInt(process.env.RETRAIN_EVAL_EPOCHS || '6', 10);
 const PROD_MODEL_PREFIX = process.env.PROD_MODEL_PREFIX || 'model-registry';
 
-const baseHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': '*',
-  'Access-Control-Allow-Methods': '*',
-  'Access-Control-Expose-Headers': 'X-Request-ID',
-};
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+let _event = null;
+function getCorsOrigin() {
+  const origin = _event?.headers?.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  if (origin.startsWith('http://localhost:')) return origin;
+  return ALLOWED_ORIGINS[0] || '';
+}
+
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': getCorsOrigin(),
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Request-ID',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    'Access-Control-Expose-Headers': 'X-Request-ID',
+  };
+}
 
 const ok = (statusCode, body) => ({
   statusCode,
-  headers: baseHeaders,
+  headers: corsHeaders(),
   body: JSON.stringify(body),
 });
 
 exports.handler = async (event) => {
+  _event = event;
   try {
     if (event.requestContext?.http?.method === 'OPTIONS') {
       return ok(200, { status: 'ok' });

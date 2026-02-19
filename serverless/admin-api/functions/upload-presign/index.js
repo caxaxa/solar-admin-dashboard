@@ -1,5 +1,5 @@
 const { s3, dynamodb } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getProjectsTable } = require('../shared/env');
 const { ulid } = require('ulid');
 
@@ -15,6 +15,7 @@ function getUploadsBucket(env) {
  * Admin version - does not require user auth, uses orgId from path.
  */
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = (event.requestContext?.http?.method || 'GET').toUpperCase();
 
   if (method === 'OPTIONS') {

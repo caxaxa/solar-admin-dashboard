@@ -1,5 +1,5 @@
 const { s3, cognito, dynamodb } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { getProjectsTable } = require('../shared/env');
 
 const ENVIRONMENTS = [
@@ -176,6 +176,7 @@ async function getProjectMetadata(env, projectIds) {
 }
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   if ((event.requestContext?.http?.method || '').toUpperCase() === 'OPTIONS') {
     return preflightResponse();
   }

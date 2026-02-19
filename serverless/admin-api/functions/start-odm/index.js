@@ -1,5 +1,5 @@
 const { sfn, dynamodb, s3 } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getProjectsTable } = require('../shared/env');
 
 const UPLOADS_BUCKET_DEV = 'solar-uploads-dev';
@@ -22,6 +22,7 @@ function getStepFunctionsArn(env) {
  * Admin version - triggered after images are uploaded via admin dashboard.
  */
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = (event.requestContext?.http?.method || 'GET').toUpperCase();
 
   if (method === 'OPTIONS') {
@@ -38,12 +39,12 @@ exports.handler = async (event) => {
       return errorResponse(400, 'Missing orgId or projectId');
     }
 
-    const env = normalizeEnv(event.queryStringParameters?.env);
-    const projectsTable = getProjectsTable(env);
-    const stepFunctionsArn = getStepFunctionsArn(env);
+    const requestedEnv = normalizeEnv(event.queryStringParameters?.env);
+    let env = requestedEnv;
+    let projectsTable = getProjectsTable(env);
 
     // Get project metadata
-    const projectResult = await dynamodb.get({
+    let projectResult = await dynamodb.get({
       TableName: projectsTable,
       Key: {
         PK: `PROJECT#${projectId}`,
@@ -52,8 +53,30 @@ exports.handler = async (event) => {
     }).promise();
 
     if (!projectResult.Item) {
+      const fallbackEnv = env === 'prod' ? 'dev' : 'prod';
+      const fallbackTable = getProjectsTable(fallbackEnv);
+      if (fallbackTable) {
+        const fallbackResult = await dynamodb.get({
+          TableName: fallbackTable,
+          Key: {
+            PK: `PROJECT#${projectId}`,
+            SK: 'METADATA',
+          },
+        }).promise();
+        if (fallbackResult.Item) {
+          console.log(`Project ${projectId} not found in ${env}; falling back to ${fallbackEnv}`);
+          env = fallbackEnv;
+          projectsTable = fallbackTable;
+          projectResult = fallbackResult;
+        }
+      }
+    }
+
+    if (!projectResult.Item) {
       return errorResponse(404, 'Project not found');
     }
+
+    const stepFunctionsArn = getStepFunctionsArn(env);
 
     const project = projectResult.Item;
     const userId = project.user_id || orgId;
@@ -101,6 +124,17 @@ exports.handler = async (event) => {
       'm5.24xlarge': 'm5-24xl',
     };
     const jobDefSuffix = instanceSuffixMap[instanceType] || 'm5-12xl';
+    const instanceVcpuMap = {
+      'm5.large': 2,
+      'm5.xlarge': 4,
+      'm5.2xlarge': 8,
+      'm5.4xlarge': 16,
+      'm5.8xlarge': 32,
+      'm5.12xlarge': 48,
+      'm5.16xlarge': 64,
+      'm5.24xlarge': 96,
+    };
+    const desiredVcpus = instanceVcpuMap[instanceType] || instanceVcpuMap['m5.12xlarge'];
 
     // Create manifest
     const timestamp = Math.floor(Date.now() / 1000);
@@ -169,6 +203,10 @@ exports.handler = async (event) => {
         manifest_key: `${userId}/projects/${projectId}/manifest.json`,
         instance_type: instanceType,
         job_definition_suffix: jobDefSuffix,
+        desired_vcpus: desiredVcpus,
+        odm_profile: 'fast',
+        odm_max_concurrency: '',
+        odm_extra_flags: '[]',
         admin_triggered: true,
       }),
     }).promise();

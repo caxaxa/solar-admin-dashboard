@@ -29,6 +29,14 @@ Globals:
         TRAINING_DATA_BUCKET: !Ref TrainingDataBucket
         MODEL_REGISTRY_TABLE: !Ref ModelRegistryTable
         MODEL_REGISTRY_PROD_POINTER_PK: !Ref ModelRegistryProdPointerPk
+        EL_UPLOADS_BUCKET_DEV: !Ref ELUploadsBucketDev
+        EL_UPLOADS_BUCKET_PROD: !Ref ELUploadsBucketProd
+        EL_GROUNDTRUTH_BUCKET_DEV: !Ref ELGroundtruthBucketDev
+        EL_GROUNDTRUTH_BUCKET_PROD: !Ref ELGroundtruthBucketProd
+        EL_REPORTS_BUCKET_DEV: !Ref ELReportsBucketDev
+        EL_REPORTS_BUCKET_PROD: !Ref ELReportsBucketProd
+        EL_REPORT_JOB_DEF_DEV: !Ref ELReportJobDefinitionDev
+        EL_REPORT_JOB_DEF_PROD: !Ref ELReportJobDefinitionProd
 
 Parameters:
   SenderEmail:
@@ -109,6 +117,30 @@ Parameters:
   ProdModelPrefix:
     Type: String
     Default: model-registry
+  ELUploadsBucketDev:
+    Type: String
+    Default: solar-el-uploads-dev
+  ELUploadsBucketProd:
+    Type: String
+    Default: solar-el-uploads-prod
+  ELGroundtruthBucketDev:
+    Type: String
+    Default: solar-el-groundtruth-dev
+  ELGroundtruthBucketProd:
+    Type: String
+    Default: solar-el-groundtruth-prod
+  ELReportsBucketDev:
+    Type: String
+    Default: solar-el-reports-dev
+  ELReportsBucketProd:
+    Type: String
+    Default: solar-el-reports-prod
+  ELReportJobDefinitionDev:
+    Type: String
+    Default: solar-el-report-dev
+  ELReportJobDefinitionProd:
+    Type: String
+    Default: solar-el-report-prod
 
 Resources:
   AdminHttpApi:
@@ -673,6 +705,162 @@ Resources:
             ApiId: !Ref AdminHttpApi
             Path: /api/model-registry/prepare
             Method: POST
+
+  # ── EL (Electroluminescence) Lambda Functions ──
+
+  ELRunDetectionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: el-run-detections/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}/*
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}/*
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /el/projects/{orgId}/{projectId}/run-detections
+            Method: POST
+
+  ELAnnotationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: el-annotations/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}/*
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}/*
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /el/projects/{orgId}/{projectId}/annotations
+            Method: ANY
+
+  ELProjectActionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: el-project-actions/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - batch:SubmitJob
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - arn:aws:s3:::solar-ai-training/*
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketDev}
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}
+                - !Sub arn:aws:s3:::${ELReportsBucketDev}
+                - !Sub arn:aws:s3:::${ELReportsBucketProd}
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+                - s3:DeleteObject
+              Resource:
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}/*
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}/*
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}/*
+                - !Sub arn:aws:s3:::${ELReportsBucketDev}/*
+                - !Sub arn:aws:s3:::${ELReportsBucketProd}/*
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /el/projects/{orgId}/{projectId}/actions/{action}
+            Method: POST
+
+  ELProjectStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: el-project-status/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}/*
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}/*
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketDev}
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketDev}/*
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}
+                - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}/*
+                - !Sub arn:aws:s3:::${ELReportsBucketDev}
+                - !Sub arn:aws:s3:::${ELReportsBucketDev}/*
+                - !Sub arn:aws:s3:::${ELReportsBucketProd}
+                - !Sub arn:aws:s3:::${ELReportsBucketProd}/*
+                - arn:aws:s3:::solar-ai-training
+                - arn:aws:s3:::solar-ai-training/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /el/projects/{orgId}/{projectId}/status
+            Method: GET
 
 Outputs:
   ApiEndpoint:

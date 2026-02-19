@@ -1,5 +1,5 @@
-import { Sidebar } from '@/components/Sidebar';
-import { Header } from '@/components/Header';
+import { Sidebar } from '@/components/shared/Sidebar';
+import { Header } from '@/components/shared/Header';
 
 export default function SettingsPage() {
   return (

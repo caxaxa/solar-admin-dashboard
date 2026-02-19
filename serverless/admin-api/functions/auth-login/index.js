@@ -1,5 +1,5 @@
 const { cognito } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 
 function parseBody(event) {
   if (!event.body) return {};
@@ -66,6 +66,7 @@ async function getUserInfo(accessToken) {
 }
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   if ((event.requestContext?.http?.method || '').toUpperCase() === 'OPTIONS') {
     return preflightResponse();
   }

@@ -91,7 +91,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       description: 'Define region of interest',
       complete: status?.hasCropAnnotation || false,
       actionLabel: 'Edit Crop',
-      actionHref: `/annotate/crop?orgId=${orgId}&projectId=${projectId}&env=${env}`,
+      actionHref: `/thermographic/annotate/crop?orgId=${orgId}&projectId=${projectId}&env=${env}`,
     },
     {
       id: 'inference',
@@ -109,7 +109,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       description: 'Verify and correct detections',
       complete: status?.hasHumanReview || false,
       actionLabel: 'Review Detections',
-      actionHref: `/annotate/defects?orgId=${orgId}&projectId=${projectId}&env=${env}`,
+      actionHref: `/thermographic/annotate/defects?orgId=${orgId}&projectId=${projectId}&env=${env}`,
     },
     {
       id: 'report',
@@ -129,11 +129,11 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       actionLabel: 'View PDF',
       externalUrl: status?.reportFullUrl || undefined,
       thermalReviewHref: status?.hasReport
-        ? `/annotate/thermal?orgId=${orgId}&projectId=${projectId}&env=${env}`
+        ? `/thermographic/annotate/thermal?orgId=${orgId}&projectId=${projectId}&env=${env}`
         : undefined,
       // TeX editing features
       texEditHref: status?.hasReport
-        ? `/annotate/tex?orgId=${orgId}&projectId=${projectId}&env=${env}`
+        ? `/thermographic/annotate/tex?orgId=${orgId}&projectId=${projectId}&env=${env}`
         : undefined,
       recompileTexAction: status?.hasTexEdit ? 'recompile-tex' : undefined,
     },
@@ -143,8 +143,10 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
       icon: Send,
       description: 'Make available to end user & archive training data',
       complete: status?.isReleased || false,
-      actionLabel: status?.isReleased ? 'Released' : 'Release',
+      actionLabel: status?.isReleased ? 'Released' : 'Release with Paywall',
       actionType: status?.isReleased ? undefined : 'release',
+      secondaryActionLabel: status?.isReleased ? undefined : 'Release for Free',
+      secondaryActionType: status?.isReleased ? undefined : 'release-free',
       // Additional error release action
       errorActionLabel: 'Release with Error',
       errorActionType: status?.isReleased ? undefined : 'release-error',
@@ -184,8 +186,11 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
         }
       } else {
         // Generic action handler for other action types
+        const releaseFree = actionType === 'release-free';
+        const resolvedActionType = releaseFree ? 'release' : actionType;
+        const releaseModeQuery = releaseFree ? '&release_mode=free' : '';
         const response = await fetch(
-          buildApiUrl(`/projects/${orgId}/${projectId}/actions/${actionType}?env=${env}`),
+          buildApiUrl(`/projects/${orgId}/${projectId}/actions/${resolvedActionType}?env=${env}${releaseModeQuery}`),
           { method: 'POST' }
         );
         if (!response.ok) {
@@ -200,7 +205,7 @@ export function PipelineView({ orgId, projectId, env }: PipelineViewProps) {
           alert(`Job submitted successfully!\nAction: ${actionType}\nJob ID: ${data.jobId}`);
         } else if (data.success) {
           // Special handling for release action
-          if (actionType === 'release' && data.training_data_archived) {
+          if ((actionType === 'release' || actionType === 'release-free') && data.training_data_archived) {
             alert(`Project released successfully!\n\nTraining data archived:\n${data.archived_files?.length || 0} files copied to training bucket.`);
           } else {
             alert(data.message || `${actionType} completed successfully!`);

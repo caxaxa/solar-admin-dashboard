@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { FolderOpen, ChevronRight, Loader2, Plus, Play, Clock, Upload, Trash2 } from 'lucide-react';
 import { buildApiUrl } from '@/lib/api-client';
-import { CreateProjectModal } from './CreateProjectModal';
+import { CreateProjectModal } from '../shared/CreateProjectModal';
 
 interface Project {
   orgId: string;
@@ -406,7 +406,7 @@ export function ProjectsList() {
                           </span>
                         )}
                         <Link
-                          href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=${project.environment}`}
+                          href={`/thermographic/project?orgId=${project.orgId}&projectId=${project.projectId}&env=${project.environment}`}
                           className="p-2 text-gray-400 hover:text-blue-600"
                         >
                           <ChevronRight className="h-5 w-5" />
@@ -457,7 +457,7 @@ export function ProjectsList() {
                   return (
                     <Link
                       key={project.projectId}
-                      href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=prod`}
+                      href={`/thermographic/project?orgId=${project.orgId}&projectId=${project.projectId}&env=prod`}
                       className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors group"
                     >
                       <div className="flex items-center gap-3">
@@ -522,7 +522,7 @@ export function ProjectsList() {
                   return (
                     <Link
                       key={project.projectId}
-                      href={`/project?orgId=${project.orgId}&projectId=${project.projectId}&env=dev`}
+                      href={`/thermographic/project?orgId=${project.orgId}&projectId=${project.projectId}&env=dev`}
                       className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors group"
                     >
                       <div className="flex items-center gap-3">

@@ -1,11 +1,12 @@
 const { dynamodb } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getProjectsTable } = require('../shared/env');
 
 /**
  * Finalize project upload - update project with file counts and change status.
  */
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = (event.requestContext?.http?.method || 'GET').toUpperCase();
 
   if (method === 'OPTIONS') {

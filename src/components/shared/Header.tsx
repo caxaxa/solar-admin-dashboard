@@ -3,12 +3,14 @@
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { User, LogOut, Home, FolderKanban, Settings as SettingsIcon, Cpu } from 'lucide-react';
+import { User, LogOut, Home, FolderKanban, Settings as SettingsIcon, Cpu, Zap } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: Home },
-  { href: '/projects', label: 'Projects', icon: FolderKanban },
-  { href: '/model', label: 'AI Model', icon: Cpu },
+  { href: '/thermographic/projects', label: 'Thermo Projects', icon: FolderKanban },
+  { href: '/thermographic/model', label: 'Thermo AI', icon: Cpu },
+  { href: '/el/projects', label: 'EL Projects', icon: Zap },
+  { href: '/el/model', label: 'EL AI', icon: Cpu },
   { href: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 

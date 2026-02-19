@@ -1,5 +1,5 @@
 const { s3 } = require('../shared/aws-clients');
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv, getBucketConfig } = require('../shared/env');
 
 function getPathParams(event) {
@@ -107,6 +107,7 @@ async function handlePut(event) {
 }
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = (event.requestContext?.http?.method || 'GET').toUpperCase();
 
   if (method === 'OPTIONS') {

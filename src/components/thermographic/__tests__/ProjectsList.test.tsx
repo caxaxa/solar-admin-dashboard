@@ -29,7 +29,7 @@ vi.mock('@/lib/api-client', () => ({
 }))
 
 // Mock CreateProjectModal
-vi.mock('../CreateProjectModal', () => ({
+vi.mock('../../shared/CreateProjectModal', () => ({
   CreateProjectModal: () => <div data-testid="create-modal" />,
 }))
 

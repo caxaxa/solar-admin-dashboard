@@ -8,7 +8,7 @@
  * 4. Eliminate overlaps between aligned panels
  */
 
-const { jsonResponse, errorResponse, preflightResponse } = require('../shared/http');
+const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
 const { normalizeEnv } = require('../shared/env');
 
 // Label normalization maps various labels to canonical names
@@ -418,6 +418,7 @@ function standardizeAndDeduplicate(detections, iouThreshold = 0.2) {
 }
 
 exports.handler = async (event) => {
+  setRequestEvent(event);
   const method = event.requestContext?.http?.method || 'POST';
   if (method === 'OPTIONS') {
     return preflightResponse();

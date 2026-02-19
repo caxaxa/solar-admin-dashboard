@@ -11,6 +11,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      'next/navigation': path.resolve(__dirname, './src/test/__mocks__/next-navigation.ts'),
     },
   },
 })
