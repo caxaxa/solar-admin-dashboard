@@ -72,7 +72,7 @@ export function ProjectsList() {
   const fetchProjects = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch(buildApiUrl('/projects'));
+      const response = await fetch(buildApiUrl('/projects?type=thermographic'));
       if (!response.ok) throw new Error('Failed to fetch projects');
       const data = await response.json();
       setProjects(data.projects);

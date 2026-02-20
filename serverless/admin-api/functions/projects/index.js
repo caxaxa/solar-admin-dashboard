@@ -125,6 +125,7 @@ async function getPendingProjects(env) {
           totalSizeBytes: item.total_size_bytes || 0,
           createdAt: item.created_at,
           environment: env,
+          projectType: item.project_type || 'thermographic',
         });
       }
 
@@ -181,6 +182,7 @@ exports.handler = async (event) => {
     return preflightResponse();
   }
   try {
+    const typeFilter = event.queryStringParameters?.type || '';
     const userPoolId = process.env.COGNITO_USER_POOL_ID;
     const orgEmailMap = await getOrgEmailMap(userPoolId);
     const allProjects = [];
@@ -194,14 +196,17 @@ exports.handler = async (event) => {
       // Collect project IDs per environment before enriching with metadata
       const envProjects = [];
 
-      // Get processed projects from S3 (have orthophotos)
-      const organizations = await listOrgsFromBucket(bucket);
-      for (const orgId of organizations) {
-        if (!orgId.includes('-')) continue;
+      // EL projects don't live in orthos buckets — skip S3 scan for EL-only requests
+      if (typeFilter !== 'el') {
+        // Get processed projects from S3 (have orthophotos)
+        const organizations = await listOrgsFromBucket(bucket);
+        for (const orgId of organizations) {
+          if (!orgId.includes('-')) continue;
 
-        const projects = await listProjectsFromBucket(bucket, orgId);
-        for (const projectId of projects) {
-          envProjects.push({ orgId, projectId });
+          const projects = await listProjectsFromBucket(bucket, orgId);
+          for (const projectId of projects) {
+            envProjects.push({ orgId, projectId });
+          }
         }
       }
 
@@ -218,6 +223,10 @@ exports.handler = async (event) => {
 
         const meta = metadataMap[projectId] || {};
 
+        // Skip EL projects in thermographic listing (and vice versa)
+        if (typeFilter === 'el' && meta.project_type !== 'el') continue;
+        if (typeFilter !== 'el' && meta.project_type === 'el') continue;
+
         // Flag entries that exist in S3 but have no Dynamo metadata as deleted/unknown
         if (!meta.project_id) {
           allProjects.push({
@@ -230,6 +239,7 @@ exports.handler = async (event) => {
             stages: {},
             isReleased: false,
             isDeleted: true,
+            projectType: 'thermographic',
           });
         } else {
           allProjects.push({
@@ -242,6 +252,7 @@ exports.handler = async (event) => {
             stages: meta.stages,
             isReleased: meta.is_released,
             isDeleted: false,
+            projectType: meta.project_type || 'thermographic',
           });
         }
       }
@@ -250,9 +261,15 @@ exports.handler = async (event) => {
       const envPendingProjects = await getPendingProjects(envConfig.name);
       for (const project of envPendingProjects) {
         const key = `${envConfig.name}-${project.orgId}-${project.projectId}`;
-        if (!seen.has(key)) {
-          pendingProjects.push(project);
+        if (seen.has(key)) {
+          continue;
         }
+
+        // Filter pending projects by type too
+        if (typeFilter === 'el' && project.projectType !== 'el') continue;
+        if (typeFilter !== 'el' && project.projectType === 'el') continue;
+
+        pendingProjects.push(project);
       }
     }
 
