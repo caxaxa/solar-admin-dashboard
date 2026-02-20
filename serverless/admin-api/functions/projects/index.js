@@ -214,13 +214,18 @@ exports.handler = async (event) => {
       if (typeFilter === 'el') {
         const elBucket = process.env[`EL_UPLOADS_BUCKET_${envConfig.name.toUpperCase()}`];
         if (elBucket) {
-          const organizations = await listOrgsFromBucket(elBucket);
-          for (const orgId of organizations) {
-            if (!orgId.includes('-')) continue;
-            const projects = await listProjectsFromBucket(elBucket, orgId);
-            for (const projectId of projects) {
-              envProjects.push({ orgId, projectId });
+          try {
+            const organizations = await listOrgsFromBucket(elBucket);
+            for (const orgId of organizations) {
+              if (!orgId.includes('-')) continue;
+              const projects = await listProjectsFromBucket(elBucket, orgId);
+              for (const projectId of projects) {
+                envProjects.push({ orgId, projectId });
+              }
             }
+          } catch (err) {
+            // Bucket may not exist yet for this environment (e.g. prod)
+            if (err.code !== 'NoSuchBucket') throw err;
           }
         }
       }

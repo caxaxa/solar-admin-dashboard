@@ -23,6 +23,8 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+const LABELS = ['crack', 'micro-crack'];
+
 function generateMockBoxes(imageWidth, imageHeight) {
   const count = randomInt(1, 5);
   const boxes = [];
@@ -31,7 +33,8 @@ function generateMockBoxes(imageWidth, imageHeight) {
     const h = randomInt(30, Math.min(200, imageHeight / 3));
     const left = randomInt(10, imageWidth - w - 10);
     const top = randomInt(10, imageHeight - h - 10);
-    boxes.push({ left, top, width: w, height: h, label: 'defects' });
+    const label = LABELS[randomInt(0, LABELS.length - 1)];
+    boxes.push({ left, top, width: w, height: h, label });
   }
   return boxes;
 }

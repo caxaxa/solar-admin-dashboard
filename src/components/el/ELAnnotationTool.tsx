@@ -33,8 +33,38 @@ interface BoundingBox {
   label: string;
 }
 
-const DEFECT_COLOR = '#ef4444';
-const DEFECT_LABEL = 'defects';
+// --- Label configuration ---------------------------------------------------
+type DefectLabel = 'crack' | 'micro-crack';
+
+const LABEL_CONFIG: Record<DefectLabel, { color: string; display: string; key: string }> = {
+  crack:        { color: '#ef4444', display: 'Crack',       key: '1' },
+  'micro-crack': { color: '#f59e0b', display: 'Micro-crack', key: '2' },
+};
+
+const LABELS = Object.keys(LABEL_CONFIG) as DefectLabel[];
+const DEFAULT_LABEL: DefectLabel = 'crack';
+
+function labelColor(label: string): string {
+  return (LABEL_CONFIG as Record<string, { color: string }>)[label]?.color ?? '#ef4444';
+}
+
+function createAnnotationRect(box: { left: number; top: number; width: number; height: number; label: string }): Rect {
+  const color = labelColor(box.label);
+  const rect = new Rect({
+    left: box.left,
+    top: box.top,
+    width: box.width,
+    height: box.height,
+    fill: 'transparent',
+    stroke: color,
+    strokeWidth: 2,
+    cornerColor: color,
+    cornerSize: 8,
+    transparentCorners: false,
+  });
+  (rect as any).label = box.label;
+  return rect;
+}
 
 export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -48,6 +78,7 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
   const [error, setError] = useState<string | null>(null);
   const [isPanMode, setIsPanMode] = useState(false);
   const [isDrawMode, setIsDrawMode] = useState(true);
+  const [activeLabel, setActiveLabel] = useState<DefectLabel>(DEFAULT_LABEL);
 
   // Image navigation state
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -60,6 +91,7 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const startPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentRectRef = useRef<Rect | null>(null);
+  const activeLabelRef = useRef<DefectLabel>(DEFAULT_LABEL);
 
   // Undo/Redo
   const undoStackRef = useRef<string[]>([]);
@@ -68,6 +100,11 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Keep label ref in sync with state
+  useEffect(() => {
+    activeLabelRef.current = activeLabel;
+  }, [activeLabel]);
 
   const updateBoxCount = useCallback(() => {
     const canvas = fabricCanvasRef.current;
@@ -86,7 +123,7 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           left: obj.left, top: obj.top,
           width: (obj as Rect).width * (obj.scaleX || 1),
           height: (obj as Rect).height * (obj.scaleY || 1),
-          label: (obj as any).label || DEFECT_LABEL,
+          label: (obj as any).label || DEFAULT_LABEL,
         }))
     );
     undoStackRef.current.push(state);
@@ -103,8 +140,20 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
         top: Math.round(obj.top!),
         width: Math.round((obj as Rect).width! * (obj.scaleX || 1)),
         height: Math.round((obj as Rect).height! * (obj.scaleY || 1)),
-        label: (obj as any).label || DEFECT_LABEL,
+        label: (obj as any).label || DEFAULT_LABEL,
       }));
+  }, []);
+
+  // Count boxes by label
+  const countByLabel = useCallback((): Record<string, number> => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return {};
+    const counts: Record<string, number> = {};
+    canvas.getObjects().filter(obj => obj.type === 'rect').forEach(obj => {
+      const lbl = (obj as any).label || DEFAULT_LABEL;
+      counts[lbl] = (counts[lbl] || 0) + 1;
+    });
+    return counts;
   }, []);
 
   // Load image + annotations for a given index
@@ -152,20 +201,15 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           // Load bounding boxes
           const boxes: BoundingBox[] = data.annotations?.boundingBoxes || [];
           boxes.forEach(box => {
-            const rect = new Rect({
+            // Migrate legacy "defects" label to "crack"
+            const label = box.label === 'defects' ? 'crack' : box.label;
+            canvas.add(createAnnotationRect({
               left: box.left * scale,
               top: box.top * scale,
               width: box.width * scale,
               height: box.height * scale,
-              fill: 'transparent',
-              stroke: DEFECT_COLOR,
-              strokeWidth: 2,
-              cornerColor: DEFECT_COLOR,
-              cornerSize: 8,
-              transparentCorners: false,
-            });
-            (rect as any).label = DEFECT_LABEL;
-            canvas.add(rect);
+              label,
+            }));
           });
 
           canvas.renderAll();
@@ -225,19 +269,14 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
       const pointer = canvas.getScenePoint(opt.e);
       startPointRef.current = { x: pointer.x, y: pointer.y };
 
-      const rect = new Rect({
+      const currentLabel = activeLabelRef.current;
+      const rect = createAnnotationRect({
         left: pointer.x,
         top: pointer.y,
         width: 0,
         height: 0,
-        fill: 'transparent',
-        stroke: DEFECT_COLOR,
-        strokeWidth: 2,
-        cornerColor: DEFECT_COLOR,
-        cornerSize: 8,
-        transparentCorners: false,
+        label: currentLabel,
       });
-      (rect as any).label = DEFECT_LABEL;
       currentRectRef.current = rect;
       canvas.add(rect);
     });
@@ -335,7 +374,7 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           top: Math.round(obj.top! / scale),
           width: Math.round((obj as Rect).width! * (obj.scaleX || 1) / scale),
           height: Math.round((obj as Rect).height! * (obj.scaleY || 1) / scale),
-          label: (obj as any).label || DEFECT_LABEL,
+          label: (obj as any).label || DEFAULT_LABEL,
         }));
 
       const resp = await fetch(
@@ -393,64 +432,33 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
     updateBoxCount();
   }, [saveUndoState, updateBoxCount]);
 
+  // Restore boxes from serialized state (used by undo/redo)
+  const restoreBoxes = useCallback((boxes: BoundingBox[]) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    canvas.getObjects().filter(obj => obj.type === 'rect').forEach(obj => canvas.remove(obj));
+    boxes.forEach(box => canvas.add(createAnnotationRect(box)));
+    canvas.renderAll();
+    updateBoxCount();
+  }, [updateBoxCount]);
+
   // Undo
   const handleUndo = useCallback(() => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || undoStackRef.current.length === 0) return;
+    if (!fabricCanvasRef.current || undoStackRef.current.length === 0) return;
     const currentState = JSON.stringify(collectBoxes());
     redoStackRef.current.push(currentState);
     const prevState = undoStackRef.current.pop()!;
-    const boxes: BoundingBox[] = JSON.parse(prevState);
-
-    const bgImage = canvas.getObjects().find(obj => obj.type === 'image');
-    const scale = bgImage ? (bgImage.scaleX || 1) : 1;
-
-    canvas.getObjects().filter(obj => obj.type === 'rect').forEach(obj => canvas.remove(obj));
-    boxes.forEach(box => {
-      const rect = new Rect({
-        left: box.left, top: box.top,
-        width: box.width, height: box.height,
-        fill: 'transparent',
-        stroke: DEFECT_COLOR,
-        strokeWidth: 2,
-        cornerColor: DEFECT_COLOR,
-        cornerSize: 8,
-        transparentCorners: false,
-      });
-      (rect as any).label = DEFECT_LABEL;
-      canvas.add(rect);
-    });
-    canvas.renderAll();
-    updateBoxCount();
-  }, [collectBoxes, updateBoxCount]);
+    restoreBoxes(JSON.parse(prevState));
+  }, [collectBoxes, restoreBoxes]);
 
   // Redo
   const handleRedo = useCallback(() => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || redoStackRef.current.length === 0) return;
+    if (!fabricCanvasRef.current || redoStackRef.current.length === 0) return;
     const currentState = JSON.stringify(collectBoxes());
     undoStackRef.current.push(currentState);
     const nextState = redoStackRef.current.pop()!;
-    const boxes: BoundingBox[] = JSON.parse(nextState);
-
-    canvas.getObjects().filter(obj => obj.type === 'rect').forEach(obj => canvas.remove(obj));
-    boxes.forEach(box => {
-      const rect = new Rect({
-        left: box.left, top: box.top,
-        width: box.width, height: box.height,
-        fill: 'transparent',
-        stroke: DEFECT_COLOR,
-        strokeWidth: 2,
-        cornerColor: DEFECT_COLOR,
-        cornerSize: 8,
-        transparentCorners: false,
-      });
-      (rect as any).label = DEFECT_LABEL;
-      canvas.add(rect);
-    });
-    canvas.renderAll();
-    updateBoxCount();
-  }, [collectBoxes, updateBoxCount]);
+    restoreBoxes(JSON.parse(nextState));
+  }, [collectBoxes, restoreBoxes]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -475,12 +483,17 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
         e.preventDefault();
         goToImage(currentIndex + 1);
       }
+      // Label shortcuts: 1 = crack, 2 = micro-crack
+      if (e.key === '1') setActiveLabel('crack');
+      if (e.key === '2') setActiveLabel('micro-crack');
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave, handleUndo, handleRedo, handleDelete, goToImage, currentIndex]);
 
   if (!mounted) return null;
+
+  const counts = countByLabel();
 
   return (
     <div className="flex flex-col h-full bg-gray-900">
@@ -515,8 +528,9 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           {/* Mode toggle */}
           <button
             onClick={() => { setIsDrawMode(true); setIsPanMode(false); }}
-            className={`p-2 rounded ${isDrawMode && !isPanMode ? 'bg-red-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
-            title="Draw box (defects)"
+            className={`p-2 rounded ${isDrawMode && !isPanMode ? 'text-white' : 'text-gray-300 hover:bg-gray-700'}`}
+            style={isDrawMode && !isPanMode ? { backgroundColor: labelColor(activeLabel) } : undefined}
+            title="Draw box"
           >
             <Square className="h-4 w-4" />
           </button>
@@ -534,6 +548,29 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           >
             <Hand className="h-4 w-4" />
           </button>
+
+          <div className="h-6 w-px bg-gray-600 mx-1" />
+
+          {/* Label selector */}
+          {LABELS.map(label => {
+            const cfg = LABEL_CONFIG[label];
+            const isActive = activeLabel === label;
+            return (
+              <button
+                key={label}
+                onClick={() => { setActiveLabel(label); setIsDrawMode(true); setIsPanMode(false); }}
+                className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors ${
+                  isActive
+                    ? 'text-white border-transparent'
+                    : 'text-gray-300 border-gray-600 hover:border-gray-400'
+                }`}
+                style={isActive ? { backgroundColor: cfg.color } : undefined}
+                title={`${cfg.display} (${cfg.key})`}
+              >
+                {cfg.display}
+              </button>
+            );
+          })}
 
           <div className="h-6 w-px bg-gray-600 mx-1" />
 
@@ -568,9 +605,20 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           <span className="text-xs text-gray-400 truncate max-w-[200px]">
             {currentFilename}
           </span>
-          <span className="text-xs text-red-400 font-medium">
-            {boxCount} defect{boxCount !== 1 ? 's' : ''}
-          </span>
+          {/* Per-label counts */}
+          {LABELS.map(label => {
+            const c = counts[label] || 0;
+            if (c === 0 && boxCount === 0) return null;
+            return (
+              <span
+                key={label}
+                className="text-xs font-medium"
+                style={{ color: LABEL_CONFIG[label].color }}
+              >
+                {c} {LABEL_CONFIG[label].display.toLowerCase()}
+              </span>
+            );
+          })}
 
           {error && (
             <span className="text-xs text-red-400">{error}</span>
