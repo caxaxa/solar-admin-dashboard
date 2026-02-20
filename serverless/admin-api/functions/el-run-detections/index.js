@@ -6,9 +6,9 @@
  *
  * Future: Replace with Batch job submission to real EL Detectron2 model.
  */
-const { s3 } = require('../shared/aws-clients');
+const { s3, dynamodb } = require('../shared/aws-clients');
 const { jsonResponse, errorResponse, preflightResponse, setRequestEvent } = require('../shared/http');
-const { normalizeEnv, getELBucketConfig } = require('../shared/env');
+const { normalizeEnv, getELBucketConfig, getProjectsTable } = require('../shared/env');
 const { writeJson } = require('../shared/s3-utils');
 
 function getPathParams(event) {
@@ -79,6 +79,27 @@ exports.handler = async (event) => {
     // Write detections to groundtruth bucket
     const detectionsKey = `${orgId}/projects/${projectId}/detections.json`;
     await writeJson(groundtruthBucket, detectionsKey, detections);
+
+    // Update DynamoDB project status
+    const projectsTable = getProjectsTable(env);
+    if (projectsTable) {
+      try {
+        await dynamodb
+          .update({
+            TableName: projectsTable,
+            Key: { PK: `PROJECT#${projectId}`, SK: 'METADATA' },
+            UpdateExpression: 'SET #status = :s, updated_at = :t',
+            ExpressionAttributeNames: { '#status': 'status' },
+            ExpressionAttributeValues: {
+              ':s': 'detecting_complete',
+              ':t': new Date().toISOString(),
+            },
+          })
+          .promise();
+      } catch (err) {
+        console.warn('DynamoDB status update failed (non-critical):', err.message);
+      }
+    }
 
     return jsonResponse(200, {
       success: true,

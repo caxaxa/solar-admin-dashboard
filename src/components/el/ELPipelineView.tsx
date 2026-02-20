@@ -43,6 +43,8 @@ interface Stage {
   actionType?: string;
   actionHref?: string;
   externalUrl?: string;
+  secondaryActionLabel?: string;
+  secondaryActionType?: string;
 }
 
 export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
@@ -139,6 +141,8 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
       isComplete: s.hasHumanReview,
       actionLabel: 'Review Detections',
       actionHref: `/el/annotate/defects?orgId=${orgId}&projectId=${projectId}&env=${env}`,
+      secondaryActionLabel: 'Mark Review Complete',
+      secondaryActionType: 'complete-review',
     },
     {
       id: 'report',
@@ -207,6 +211,22 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
                     <Eye className="h-4 w-4" />
                     {stage.actionLabel}
                   </Link>
+                )}
+
+                {/* Secondary action (e.g. mark review complete) */}
+                {stage.secondaryActionType && !stage.isComplete && (
+                  <button
+                    onClick={() => handleAction(stage.secondaryActionType!)}
+                    disabled={actionLoading}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {actionLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" />
+                    )}
+                    {stage.secondaryActionLabel}
+                  </button>
                 )}
 
                 {/* API action (detect, generate-report) */}

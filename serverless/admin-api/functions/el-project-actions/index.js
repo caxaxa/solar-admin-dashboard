@@ -155,6 +155,15 @@ exports.handler = async (event) => {
         return jsonResponse(200, { success: true, message: 'Released with error' });
       }
 
+      case 'complete-review': {
+        await writeJson(
+          groundtruthBucket,
+          `${orgId}/projects/${projectId}/review-complete.json`,
+          { completedAt: new Date().toISOString(), orgId, projectId }
+        );
+        return jsonResponse(200, { success: true, message: 'Review marked complete' });
+      }
+
       case 'delete': {
         const projectPrefix = `${orgId}/projects/${projectId}/`;
 

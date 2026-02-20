@@ -175,6 +175,8 @@ Resources:
                 - !Sub arn:aws:s3:::${GroundtruthBucketProd}
                 - !Sub arn:aws:s3:::${OrthosBucketDev}
                 - !Sub arn:aws:s3:::${OrthosBucketProd}
+                - !Sub arn:aws:s3:::${ELUploadsBucketDev}
+                - !Sub arn:aws:s3:::${ELUploadsBucketProd}
             - Effect: Allow
               Action:
                 - s3:GetObject
@@ -733,6 +735,12 @@ Resources:
               Resource:
                 - !Sub arn:aws:s3:::${ELGroundtruthBucketDev}/*
                 - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}/*
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
       Events:
         Api:
           Type: HttpApi

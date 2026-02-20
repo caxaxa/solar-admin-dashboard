@@ -210,6 +210,21 @@ exports.handler = async (event) => {
         }
       }
 
+      // EL projects: scan EL uploads bucket instead of orthos bucket
+      if (typeFilter === 'el') {
+        const elBucket = process.env[`EL_UPLOADS_BUCKET_${envConfig.name.toUpperCase()}`];
+        if (elBucket) {
+          const organizations = await listOrgsFromBucket(elBucket);
+          for (const orgId of organizations) {
+            if (!orgId.includes('-')) continue;
+            const projects = await listProjectsFromBucket(elBucket, orgId);
+            for (const projectId of projects) {
+              envProjects.push({ orgId, projectId });
+            }
+          }
+        }
+      }
+
       // Enrich with metadata (status, release info, project name)
       const metadataMap = await getProjectMetadata(
         envConfig.name,
