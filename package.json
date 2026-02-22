@@ -12,7 +12,7 @@
     "@aws-sdk/client-batch": "^3.933.0",
     "@aws-sdk/client-cognito-identity-provider": "^3.932.0",
     "@aws-sdk/client-dynamodb": "^3.932.0",
-    "@aws-sdk/client-s3": "^3.932.0",
+    "@aws-sdk/client-s3": "^3.995.0",
     "@aws-sdk/lib-dynamodb": "^3.932.0",
     "@aws-sdk/s3-request-presigner": "^3.932.0",
     "@radix-ui/react-dialog": "^1.1.15",
