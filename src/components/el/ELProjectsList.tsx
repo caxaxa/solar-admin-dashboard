@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { FolderOpen, ChevronRight, Loader2, Plus, Clock, Upload, Trash2 } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { FolderOpen, ChevronRight, Loader2, Plus, Clock, Trash2 } from 'lucide-react';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 import { CreateProjectModal } from '../shared/CreateProjectModal';
 
 interface Project {
@@ -13,7 +13,7 @@ interface Project {
   projectName?: string;
   status?: string;
   releaseStatus?: string;
-  stages?: Record<string, any>;
+  stages?: Record<string, unknown>;
   isReleased?: boolean;
   projectType?: string;
 }
@@ -55,7 +55,7 @@ const STATUS_COLORS: Record<string, string> = {
   uploading: 'bg-blue-100 text-blue-700',
   validating: 'bg-yellow-100 text-yellow-700',
   ready: 'bg-green-100 text-green-700',
-  detecting: 'bg-purple-100 text-purple-700',
+  detecting: 'bg-blue-100 text-blue-700',
   reviewing: 'bg-orange-100 text-orange-700',
   generating_report: 'bg-indigo-100 text-indigo-700',
   completed: 'bg-green-100 text-green-800',
@@ -75,7 +75,7 @@ export function ELProjectsList() {
 
   const fetchProjects = useCallback(async () => {
     try {
-      const resp = await fetch(buildApiUrl('/projects?type=el'));
+      const resp = await apiFetch(buildApiUrl('/projects?type=el'));
       if (!resp.ok) throw new Error('Failed to fetch EL projects');
       const data = await resp.json();
       setProjects(data.projects || []);
@@ -96,7 +96,7 @@ export function ELProjectsList() {
     if (!confirm('Delete this EL project? This cannot be undone.')) return;
     setActionLoading(true);
     try {
-      const resp = await fetch(
+      const resp = await apiFetch(
         buildApiUrl(`/el/projects/${orgId}/${projectId}/actions/delete?env=${env}`),
         { method: 'POST' }
       );
@@ -123,7 +123,7 @@ export function ELProjectsList() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         <span className="ml-2 text-gray-600">Loading EL projects...</span>
       </div>
     );
@@ -168,7 +168,7 @@ export function ELProjectsList() {
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           <Plus className="h-4 w-4" />
           New EL Project
@@ -217,7 +217,7 @@ export function ELProjectsList() {
                   )}
                   <Link
                     href={`/el/project?orgId=${p.orgId}&projectId=${p.projectId}&env=${p.environment}`}
-                    className="p-2 text-purple-600 hover:bg-purple-50 rounded"
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded"
                   >
                     <ChevronRight className="h-5 w-5" />
                   </Link>
@@ -244,9 +244,9 @@ export function ELProjectsList() {
                   <Link
                     key={p.projectId}
                     href={`/el/project?orgId=${p.orgId}&projectId=${p.projectId}&env=prod`}
-                    className="flex items-center gap-3 bg-white rounded-lg p-3 border border-gray-100 hover:border-purple-300 transition-colors"
+                    className="flex items-center gap-3 bg-white rounded-lg p-3 border border-gray-100 hover:border-blue-300 transition-colors"
                   >
-                    <FolderOpen className="h-5 w-5 text-purple-500 flex-shrink-0" />
+                    <FolderOpen className="h-5 w-5 text-blue-500 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <span className="font-medium text-gray-900 truncate block">
                         {p.projectName || p.projectId}
@@ -279,9 +279,9 @@ export function ELProjectsList() {
                   <Link
                     key={p.projectId}
                     href={`/el/project?orgId=${p.orgId}&projectId=${p.projectId}&env=dev`}
-                    className="flex items-center gap-3 bg-white rounded-lg p-3 border border-gray-100 hover:border-purple-300 transition-colors"
+                    className="flex items-center gap-3 bg-white rounded-lg p-3 border border-gray-100 hover:border-blue-300 transition-colors"
                   >
-                    <FolderOpen className="h-5 w-5 text-purple-400 flex-shrink-0" />
+                    <FolderOpen className="h-5 w-5 text-blue-400 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <span className="font-medium text-gray-900 truncate block">
                         {p.projectName || p.projectId}

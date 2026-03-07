@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 
-export default function CropRedirect() {
+function CropRedirectInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -13,4 +13,12 @@ export default function CropRedirect() {
   }, [searchParams, router]);
 
   return null;
+}
+
+export default function CropRedirect() {
+  return (
+    <Suspense>
+      <CropRedirectInner />
+    </Suspense>
+  );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { X, Loader2, Plus, Upload, CheckCircle } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 import { ProjectUploadModal } from './ProjectUploadModal';
 
 interface OrgInfo {
@@ -50,7 +50,7 @@ export function CreateProjectModal({ organizations, onClose, onSuccess }: Create
     setLoading(true);
 
     try {
-      const response = await fetch(buildApiUrl('/projects/create'), {
+      const response = await apiFetch(buildApiUrl('/projects/create'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

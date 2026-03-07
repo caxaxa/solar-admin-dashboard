@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { User, LogOut, Home, FolderKanban, Settings as SettingsIcon, Cpu, Zap } from 'lucide-react';
+import { User, LogOut, Home, FolderKanban, Settings as SettingsIcon, Cpu, Zap, Activity } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: Home },
@@ -11,32 +11,28 @@ const navItems = [
   { href: '/thermographic/model', label: 'Thermo AI', icon: Cpu },
   { href: '/el/projects', label: 'EL Projects', icon: Zap },
   { href: '/el/model', label: 'EL AI', icon: Cpu },
+  { href: '/iv/projects', label: 'IV Projects', icon: Activity },
   { href: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
+
+function getStoredDisplayName(): string {
+  try {
+    const storedUser = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+    if (storedUser) {
+      const parsed = JSON.parse(storedUser);
+      if (parsed?.email) return parsed.email;
+      if (parsed?.username) return parsed.username;
+    }
+  } catch {
+    // swallow parse errors
+  }
+  return 'Admin';
+}
 
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
-  const [displayName] = useState(() => {
-    try {
-      if (typeof window === 'undefined') {
-        return 'Admin';
-      }
-      const storedUser = localStorage.getItem('user');
-      if (storedUser) {
-        const parsed = JSON.parse(storedUser);
-        if (parsed?.email) {
-          return parsed.email as string;
-        }
-        if (parsed?.username) {
-          return parsed.username as string;
-        }
-      }
-    } catch {
-      // swallow parse errors
-    }
-    return 'Admin';
-  });
+  const [displayName] = useState(getStoredDisplayName);
 
   const handleLogout = useCallback(() => {
     localStorage.removeItem('accessToken');

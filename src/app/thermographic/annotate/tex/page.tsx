@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Sidebar } from '@/components/shared/Sidebar';
 import { Header } from '@/components/shared/Header';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 import { Save, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 
-export default function TexEditorPage() {
+function TexEditorContent() {
   const searchParams = useSearchParams();
   const orgId = searchParams.get('orgId');
   const projectId = searchParams.get('projectId');
@@ -33,7 +33,7 @@ export default function TexEditorPage() {
       try {
         setLoading(true);
         setError(null);
-        const response = await fetch(
+        const response = await apiFetch(
           buildApiUrl(`/projects/${orgId}/${projectId}/tex-content?env=${env}`)
         );
 
@@ -65,7 +65,7 @@ export default function TexEditorPage() {
       setError(null);
       setSaveSuccess(false);
 
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/projects/${orgId}/${projectId}/tex-content?env=${env}`),
         {
           method: 'PUT',
@@ -230,5 +230,13 @@ export default function TexEditorPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function TexEditorPage() {
+  return (
+    <Suspense>
+      <TexEditorContent />
+    </Suspense>
   );
 }

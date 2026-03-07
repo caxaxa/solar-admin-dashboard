@@ -43,7 +43,7 @@ exports.handler = async (event) => {
       // Step 5: Human review saves to groundtruth bucket
       objectExists(groundtruthBucket, `${orgId}/projects/${projectId}/groundtruth/defect_labels.json`).catch(() => false),
       // Step 6: Report generation
-      objectExists(reportsBucket, `${orgId}/projects/${projectId}/thermographic-report/report-lowres.pdf`).catch(() => false),
+      objectExists(reportsBucket, `${orgId}/projects/${projectId}/thermographic-report/report-full.pdf`).catch(() => false),
       // Check if TeX has been manually edited (marker file exists in tex_bundle)
       objectExists(reportsBucket, `${orgId}/projects/${projectId}/tex_bundle/.edited`).catch(() => false),
     ]);
@@ -57,13 +57,8 @@ exports.handler = async (event) => {
     // Generate signed URL for full-resolution report PDF if report exists
     let reportFullUrl = null;
     if (hasReport) {
-      const reportFullKey = `${orgId}/projects/${projectId}/thermographic-report/report-full.pdf`;
+      const pdfKey = `${orgId}/projects/${projectId}/thermographic-report/report-full.pdf`;
       try {
-        // Check if full-res exists, fallback to lowres
-        const hasFullRes = await objectExists(reportsBucket, reportFullKey);
-        const pdfKey = hasFullRes
-          ? reportFullKey
-          : `${orgId}/projects/${projectId}/thermographic-report/report-lowres.pdf`;
         reportFullUrl = getSignedGetUrl(reportsBucket, pdfKey, 7200); // 2 hour expiry
       } catch (err) {
         console.warn('Failed to generate signed URL for report:', err);

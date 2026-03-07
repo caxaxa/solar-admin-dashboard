@@ -16,7 +16,7 @@ import {
   CheckCircle2,
   RefreshCw,
 } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 
 // Coordinate system constants
 const THERMAL_WIDTH = 640;
@@ -175,7 +175,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
         const bucket = env === 'prod' ? 'solar-reports-prod' : 'solar-reports-dev';
         const key = `${orgId}/projects/${projectId}/thermographic-report/annotation_manifest.json`;
 
-        const response = await fetch(
+        const response = await apiFetch(
           buildApiUrl(`/s3/presigned-url?bucket=${bucket}&key=${encodeURIComponent(key)}&operation=get`)
         );
 
@@ -209,7 +209,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
   async function loadExistingOverrides(bucket: string, orgId: string, projectId: string) {
     try {
       const key = `${orgId}/projects/${projectId}/annotation_overrides.json`;
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/s3/presigned-url?bucket=${bucket}&key=${encodeURIComponent(key)}&operation=get`)
       );
 
@@ -241,7 +241,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
     const bucket = env === 'prod' ? 'solar-uploads-prod' : 'solar-uploads-dev';
     const key = `${orgId}/projects/${projectId}/images/${imageName}`;
 
-    const response = await fetch(
+    const response = await apiFetch(
       buildApiUrl(`/s3/presigned-url?bucket=${bucket}&key=${encodeURIComponent(key)}&operation=get`)
     );
 
@@ -416,7 +416,7 @@ export function ThermalAnnotationTool({ orgId, projectId, env }: ThermalAnnotati
       const bucket = env === 'prod' ? 'solar-reports-prod' : 'solar-reports-dev';
       const key = `${orgId}/projects/${projectId}/annotation_overrides.json`;
 
-      const urlResponse = await fetch(
+      const urlResponse = await apiFetch(
         buildApiUrl(`/s3/presigned-url?bucket=${bucket}&key=${encodeURIComponent(key)}&operation=put&contentType=application/json`)
       );
 

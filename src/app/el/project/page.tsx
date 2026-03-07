@@ -1,12 +1,13 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Sidebar } from '@/components/shared/Sidebar';
 import { Header } from '@/components/shared/Header';
 import { ELPipelineView } from '@/components/el/ELPipelineView';
 import Link from 'next/link';
 
-export default function ELProjectPage() {
+function ELProjectContent() {
   const searchParams = useSearchParams();
   const orgId = searchParams.get('orgId');
   const projectId = searchParams.get('projectId');
@@ -17,7 +18,7 @@ export default function ELProjectPage() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
         <div className="bg-white shadow rounded-lg p-10 text-center space-y-4">
           <p className="text-gray-700">Missing project context.</p>
-          <Link href="/el/projects" className="text-purple-600 hover:underline">
+          <Link href="/el/projects" className="text-blue-600 hover:underline">
             Back to EL project list
           </Link>
         </div>
@@ -52,5 +53,13 @@ export default function ELProjectPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function ELProjectPage() {
+  return (
+    <Suspense>
+      <ELProjectContent />
+    </Suspense>
   );
 }

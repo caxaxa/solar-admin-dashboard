@@ -4,7 +4,7 @@
  * Only tests pure functions (parseJwt, isTokenExpired). Network-dependent
  * functions (authenticateUser, getUserInfo) are tested via integration tests.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 // Mock the AWS Cognito client to prevent real SDK initialization
 vi.mock('@aws-sdk/client-cognito-identity-provider', () => {

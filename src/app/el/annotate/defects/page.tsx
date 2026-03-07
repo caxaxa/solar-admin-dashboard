@@ -13,7 +13,7 @@ const ELAnnotationTool = dynamic(
     loading: () => (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-purple-500 mx-auto mb-4" />
+          <Loader2 className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
           <p className="text-gray-300">Loading annotation tool...</p>
         </div>
       </div>
@@ -32,7 +32,7 @@ function ELDefectsContent() {
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-6">
         <div className="bg-gray-800 rounded-lg p-6 text-center space-y-4">
           <p className="text-white">Missing project context.</p>
-          <Link href="/el/projects" className="text-purple-400 hover:underline">
+          <Link href="/el/projects" className="text-blue-400 hover:underline">
             Back to EL project list
           </Link>
         </div>
@@ -78,7 +78,7 @@ export default function ELDefectsAnnotationPage() {
     <Suspense fallback={
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin text-purple-500 mx-auto mb-4" />
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
           <p className="text-gray-300">Loading...</p>
         </div>
       </div>

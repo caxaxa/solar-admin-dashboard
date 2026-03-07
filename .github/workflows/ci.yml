@@ -26,3 +26,6 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: 1
         run: npm run lint
+
+      - name: Test
+        run: npm run test

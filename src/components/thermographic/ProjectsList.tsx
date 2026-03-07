@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { FolderOpen, ChevronRight, Loader2, Plus, Play, Clock, Upload, Trash2 } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { FolderOpen, ChevronRight, Loader2, Plus, Play, Clock, Trash2 } from 'lucide-react';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 import { CreateProjectModal } from '../shared/CreateProjectModal';
 
 interface Project {
@@ -13,7 +13,7 @@ interface Project {
   projectName?: string;
   status?: string;
   releaseStatus?: string;
-  stages?: Record<string, any>;
+  stages?: Record<string, unknown>;
   isReleased?: boolean;
 }
 
@@ -29,7 +29,7 @@ interface PendingProject {
   createdAt: number;
   environment: 'dev' | 'prod';
   releaseStatus?: string;
-  stages?: Record<string, any>;
+  stages?: Record<string, unknown>;
   isReleased?: boolean;
 }
 
@@ -72,7 +72,7 @@ export function ProjectsList() {
   const fetchProjects = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch(buildApiUrl('/projects?type=thermographic'));
+      const response = await apiFetch(buildApiUrl('/projects?type=thermographic'));
       if (!response.ok) throw new Error('Failed to fetch projects');
       const data = await response.json();
       setProjects(data.projects);
@@ -89,7 +89,7 @@ export function ProjectsList() {
     const key = `${project.environment}-${project.projectId}`;
     setActionLoading(key);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/projects/${project.orgId}/${project.projectId}/start-odm?env=${project.environment}`),
         { method: 'POST' }
       );
@@ -124,7 +124,7 @@ export function ProjectsList() {
     const key = `delete-${project.environment}-${project.projectId}`;
     setActionLoading(key);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/projects/${project.orgId}/${project.projectId}/actions/delete?env=${project.environment}`),
         { method: 'POST' }
       );
@@ -159,7 +159,8 @@ export function ProjectsList() {
   };
 
   const getDisplayStatus = (project: Partial<Project> | PendingProject) => {
-    const thermoReportStatus = (project as any)?.stages?.thermo_report?.status;
+    const stages = project.stages as Record<string, Record<string, unknown>> | undefined;
+    const thermoReportStatus = stages?.thermo_report?.status;
     const thermoReportFailed = thermoReportStatus === 'FAILED';
     const hasReleaseError =
       project.releaseStatus === 'error' ||
@@ -168,34 +169,34 @@ export function ProjectsList() {
       thermoReportFailed;
 
     if (hasReleaseError) {
-      return { text: 'Falha na liberação', color: 'bg-red-100 text-red-800' };
+      return { text: 'Release Failed', color: 'bg-red-100 text-red-800' };
     }
 
     const isReleased =
-      (project as any)?.isReleased === true || thermoReportStatus === 'COMPLETED';
+      ('isReleased' in project && project.isReleased === true) || thermoReportStatus === 'COMPLETED';
 
     if (project.status === 'failed' || project.status === 'validation_failed') {
-      return { text: 'Falhou', color: 'bg-red-100 text-red-800' };
+      return { text: 'Failed', color: 'bg-red-100 text-red-800' };
     }
 
     if (isReleased) {
-      return { text: 'Concluído', color: 'bg-green-100 text-green-800' };
+      return { text: 'Completed', color: 'bg-green-100 text-green-800' };
     }
 
     if (project.status === 'completed') {
-      return { text: 'Processando Relatório', color: 'bg-purple-100 text-purple-800' };
+      return { text: 'Processing Report', color: 'bg-blue-100 text-blue-800' };
     }
 
     const statusMap: Record<string, { text: string; color: string }> = {
-      creating: { text: 'Criando', color: 'bg-gray-100 text-gray-800' },
-      uploading: { text: 'Enviando', color: 'bg-blue-100 text-blue-800' },
-      validating: { text: 'Validando', color: 'bg-yellow-100 text-yellow-800' },
-      processing: { text: 'Processando', color: 'bg-purple-100 text-purple-800' },
-      processing_odm: { text: 'Processando ODM', color: 'bg-purple-100 text-purple-800' },
-      deleted: { text: 'Deletado', color: 'bg-gray-200 text-gray-800' },
+      creating: { text: 'Creating', color: 'bg-gray-100 text-gray-800' },
+      uploading: { text: 'Uploading', color: 'bg-blue-100 text-blue-800' },
+      validating: { text: 'Validating', color: 'bg-yellow-100 text-yellow-800' },
+      processing: { text: 'Processing', color: 'bg-blue-100 text-blue-800' },
+      processing_odm: { text: 'Processing ODM', color: 'bg-blue-100 text-blue-800' },
+      deleted: { text: 'Deleted', color: 'bg-gray-200 text-gray-800' },
     };
 
-    return statusMap[project.status || ''] || { text: 'Processando', color: 'bg-gray-100 text-gray-800' };
+    return statusMap[project.status || ''] || { text: 'Processing', color: 'bg-gray-100 text-gray-800' };
   };
 
   const filteredPending = pendingProjects.filter((p) => {
@@ -291,7 +292,7 @@ export function ProjectsList() {
                   }}
                   className="h-4 w-4"
                 />
-                {status === 'all' ? 'Todos' : status}
+                {status === 'all' ? 'All' : status}
               </label>
             ))}
           </div>
@@ -316,17 +317,13 @@ export function ProjectsList() {
       {/* Pending Projects - Need Processing */}
       {filteredPending.length > 0 && (
         <div className="space-y-4">
-          <h4 className="text-md font-semibold text-gray-800 flex items-center gap-2">
-            <span className="px-2 py-1 bg-orange-100 text-orange-800 rounded text-xs font-bold">
-              PENDING PROCESSING
-            </span>
-            <span className="text-gray-500 text-sm">
-              ({filteredPending.length} project{filteredPending.length !== 1 ? 's' : ''})
-            </span>
-          </h4>
 
-          <div className="bg-white rounded-lg shadow border-l-4 border-orange-500">
-            <div className="divide-y">
+          <div className="border-2 border-orange-200 rounded-lg p-4 bg-orange-50">
+            <h3 className="text-sm font-semibold text-orange-800 mb-3 flex items-center gap-2">
+              <Clock className="h-4 w-4" />
+              Pending ({filteredPending.length})
+            </h3>
+            <div className="space-y-3">
               {filteredPending.map((project) => {
                 const key = `${project.environment}-${project.projectId}`;
                 const deleteKey = `delete-${project.environment}-${project.projectId}`;
@@ -338,80 +335,70 @@ export function ProjectsList() {
                 return (
                   <div
                     key={key}
-                    className="px-4 py-4 hover:bg-orange-50 transition-colors"
+                    className="bg-white rounded-lg p-4 border border-orange-100 flex items-center justify-between"
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3">
-                          <Upload className="h-5 w-5 text-orange-500" />
-                          <span className="font-medium text-gray-900">
-                            {project.projectName}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getDisplayStatus(project).color}`}>
-                            {getDisplayStatus(project).text}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                            project.environment === 'prod' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                          }`}>
-                            {project.environment}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-sm text-gray-500 ml-8">
-                          <span className="font-mono text-xs">{project.projectId}</span>
-                          {' • '}
-                          {project.fileCount} files
-                          {project.totalSizeBytes > 0 && ` • ${formatBytes(project.totalSizeBytes)}`}
-                          {' • '}
-                          <Clock className="inline h-3 w-3" /> {formatDate(project.createdAt)}
-                        </div>
-                        {project.description && (
-                          <div className="mt-1 text-sm text-gray-400 ml-8">
-                            {project.description}
-                          </div>
-                        )}
-                      </div>
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        {canStartOdm && (
-                          <button
-                            onClick={() => handleStartOdm(project)}
-                            disabled={isLoading || isDeleting}
-                            className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50"
-                          >
-                            {isLoading ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
-                            Gerar Relatório
-                          </button>
-                        )}
-                        {canDelete && (
-                          <button
-                            onClick={() => handleDeleteProject(project)}
-                            disabled={isLoading || isDeleting}
-                            className="flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-                            title="Delete pending project"
-                          >
-                            {isDeleting ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-4 w-4" />
-                            )}
-                          </button>
-                        )}
-                        {project.status === 'processing' && (
-                          <span className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-800 rounded-lg">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Processing...
-                          </span>
-                        )}
-                        <Link
-                          href={`/thermographic/project?orgId=${project.orgId}&projectId=${project.projectId}&env=${project.environment}`}
-                          className="p-2 text-gray-400 hover:text-blue-600"
-                        >
-                          <ChevronRight className="h-5 w-5" />
-                        </Link>
+                        <span className="font-medium text-gray-900 truncate">
+                          {project.projectName}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${getDisplayStatus(project).color}`}>
+                          {getDisplayStatus(project).text}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                          project.environment === 'prod' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {project.environment.toUpperCase()}
+                        </span>
                       </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {project.fileCount} files
+                        {project.totalSizeBytes > 0 && ` · ${formatBytes(project.totalSizeBytes)}`}
+                        {' · '}
+                        {formatDate(project.createdAt)}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 ml-4">
+                      {canStartOdm && (
+                        <button
+                          onClick={() => handleStartOdm(project)}
+                          disabled={isLoading || isDeleting}
+                          className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 text-sm"
+                        >
+                          {isLoading ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
+                          Generate Report
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => handleDeleteProject(project)}
+                          disabled={isLoading || isDeleting}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded"
+                          title="Delete pending project"
+                        >
+                          {isDeleting ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
+                      {project.status === 'processing' && (
+                        <span className="flex items-center gap-2 px-3 py-2 bg-blue-100 text-blue-800 rounded-lg text-sm">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Processing...
+                        </span>
+                      )}
+                      <Link
+                        href={`/thermographic/project?orgId=${project.orgId}&projectId=${project.projectId}&env=${project.environment}`}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded"
+                      >
+                        <ChevronRight className="h-5 w-5" />
+                      </Link>
                     </div>
                   </div>
                 );
@@ -423,60 +410,38 @@ export function ProjectsList() {
 
       {/* Production Projects */}
       <div className="space-y-4">
-        <h4 className="text-md font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-          <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-bold">
-            PRODUCTION
-          </span>
-          <span className="text-gray-500 dark:text-gray-300 text-sm">
-            ({Object.values(projectsByEnvAndOrg.prod).flat().length} projects)
-          </span>
-        </h4>
+        <h3 className="text-sm font-semibold text-green-800 mb-3">
+          Production ({Object.values(projectsByEnvAndOrg.prod).flat().length})
+        </h3>
 
         {Object.entries(projectsByEnvAndOrg.prod).length === 0 ? (
-          <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-gray-500 dark:text-gray-300 text-sm">
-            No production projects found
-          </div>
+          <div className="text-sm text-gray-500">No production projects found</div>
         ) : (
           Object.entries(projectsByEnvAndOrg.prod).map(([orgId, orgProjects]) => (
-            <div key={`prod-${orgId}`} className="bg-white dark:bg-gray-900 rounded-lg shadow border-l-4 border-green-500">
-              <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-800 rounded-t-lg">
-                <h4 className="font-medium text-gray-700 dark:text-gray-100">
-                  {organizations[orgId]?.email || orgId}{' '}
-                  <span className="text-gray-400 dark:text-gray-300 text-sm">
-                    ({orgId.substring(0, 8)}...)
-                  </span>
-                </h4>
-                <p className="text-sm text-gray-500 dark:text-gray-300">
-                  {orgProjects.length} project(s)
-                </p>
+            <div key={`prod-${orgId}`} className="border-2 border-green-200 rounded-lg p-4">
+              <div className="text-xs text-gray-500 mb-2">
+                {organizations[orgId]?.email || orgId.substring(0, 12) + '...'}
               </div>
-
-              <div className="divide-y">
+              <div className="space-y-2">
                 {orgProjects.map((project) => {
                   const statusInfo = getDisplayStatus(project);
                   return (
                     <Link
                       key={project.projectId}
                       href={`/thermographic/project?orgId=${project.orgId}&projectId=${project.projectId}&env=prod`}
-                      className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors group"
+                      className="flex items-center gap-3 bg-white rounded-lg p-3 border border-gray-100 hover:border-blue-300 transition-colors"
                     >
-                      <div className="flex items-center gap-3">
-                        <FolderOpen className="h-5 w-5 text-green-500" />
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                            {project.projectName || project.projectId}
-                          </span>
-                          <span className="font-mono text-xs text-gray-500 dark:text-gray-400">
-                            {project.projectId}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusInfo.color}`}>
-                          {statusInfo.text}
+                      <FolderOpen className="h-5 w-5 text-blue-500 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="font-medium text-gray-900 truncate block">
+                          {project.projectName || project.projectId}
                         </span>
-                        <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
+                        <span className="text-xs text-gray-500">{project.projectId.substring(0, 12)}...</span>
                       </div>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusInfo.color}`}>
+                        {statusInfo.text}
+                      </span>
+                      <ChevronRight className="h-5 w-5 text-gray-400 flex-shrink-0" />
                     </Link>
                   );
                 })}
@@ -488,60 +453,38 @@ export function ProjectsList() {
 
       {/* Development Projects */}
       <div className="space-y-4">
-        <h4 className="text-md font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-          <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs font-bold">
-            DEVELOPMENT
-          </span>
-          <span className="text-gray-500 dark:text-gray-300 text-sm">
-            ({Object.values(projectsByEnvAndOrg.dev).flat().length} projects)
-          </span>
-        </h4>
+        <h3 className="text-sm font-semibold text-yellow-800 mb-3">
+          Development ({Object.values(projectsByEnvAndOrg.dev).flat().length})
+        </h3>
 
         {Object.entries(projectsByEnvAndOrg.dev).length === 0 ? (
-          <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-gray-500 dark:text-gray-300 text-sm">
-            No development projects found
-          </div>
+          <div className="text-sm text-gray-500">No development projects found</div>
         ) : (
           Object.entries(projectsByEnvAndOrg.dev).map(([orgId, orgProjects]) => (
-            <div key={`dev-${orgId}`} className="bg-white dark:bg-gray-900 rounded-lg shadow border-l-4 border-yellow-500">
-              <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-800 rounded-t-lg">
-                <h4 className="font-medium text-gray-700 dark:text-gray-100">
-                  {organizations[orgId]?.email || orgId}{' '}
-                  <span className="text-gray-400 dark:text-gray-300 text-sm">
-                    ({orgId.substring(0, 8)}...)
-                  </span>
-                </h4>
-                <p className="text-sm text-gray-500 dark:text-gray-300">
-                  {orgProjects.length} project(s)
-                </p>
+            <div key={`dev-${orgId}`} className="border-2 border-yellow-200 rounded-lg p-4">
+              <div className="text-xs text-gray-500 mb-2">
+                {organizations[orgId]?.email || orgId.substring(0, 12) + '...'}
               </div>
-
-              <div className="divide-y">
+              <div className="space-y-2">
                 {orgProjects.map((project) => {
                   const statusInfo = getDisplayStatus(project);
                   return (
                     <Link
                       key={project.projectId}
                       href={`/thermographic/project?orgId=${project.orgId}&projectId=${project.projectId}&env=dev`}
-                      className="flex items-center justify-between px-4 py-3 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors group"
+                      className="flex items-center gap-3 bg-white rounded-lg p-3 border border-gray-100 hover:border-blue-300 transition-colors"
                     >
-                      <div className="flex items-center gap-3">
-                        <FolderOpen className="h-5 w-5 text-yellow-500" />
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                            {project.projectName || project.projectId}
-                          </span>
-                          <span className="font-mono text-xs text-gray-500 dark:text-gray-400">
-                            {project.projectId}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusInfo.color}`}>
-                          {statusInfo.text}
+                      <FolderOpen className="h-5 w-5 text-blue-400 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="font-medium text-gray-900 truncate block">
+                          {project.projectName || project.projectId}
                         </span>
-                        <ChevronRight className="h-5 w-5 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
+                        <span className="text-xs text-gray-500">{project.projectId.substring(0, 12)}...</span>
                       </div>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusInfo.color}`}>
+                        {statusInfo.text}
+                      </span>
+                      <ChevronRight className="h-5 w-5 text-gray-400 flex-shrink-0" />
                     </Link>
                   );
                 })}

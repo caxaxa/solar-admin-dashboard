@@ -1,12 +1,13 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Sidebar } from '@/components/shared/Sidebar';
 import { Header } from '@/components/shared/Header';
 import { ThermalAnnotationTool } from '@/components/thermographic/ThermalAnnotationTool';
 import Link from 'next/link';
 
-export default function ThermalAnnotationPage() {
+function ThermalAnnotationContent() {
   const searchParams = useSearchParams();
   const orgId = searchParams.get('orgId');
   const projectId = searchParams.get('projectId');
@@ -58,5 +59,13 @@ export default function ThermalAnnotationPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function ThermalAnnotationPage() {
+  return (
+    <Suspense>
+      <ThermalAnnotationContent />
+    </Suspense>
   );
 }

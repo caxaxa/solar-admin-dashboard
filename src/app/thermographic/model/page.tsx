@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Loader2, RefreshCcw, Rocket, ShieldCheck, Play, AlertCircle } from 'lucide-react';
 import { Sidebar } from '@/components/shared/Sidebar';
 import { Header } from '@/components/shared/Header';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 
 type ModelRecord = {
   model_version: string;
@@ -50,7 +50,7 @@ export default function ModelPage() {
 
   const fetchModels = useCallback(async () => {
     setError(null);
-    const resp = await fetch(buildApiUrl('/api/model-registry'));
+    const resp = await apiFetch(buildApiUrl('/api/model-registry'));
     if (!resp.ok) throw new Error('Failed to fetch model registry');
     const data = await resp.json();
     setModels(data.models || []);
@@ -59,7 +59,7 @@ export default function ModelPage() {
 
   const fetchArchives = useCallback(async () => {
     setError(null);
-    const resp = await fetch(buildApiUrl('/api/training-data/archives'));
+    const resp = await apiFetch(buildApiUrl('/api/training-data/archives'));
     if (!resp.ok) throw new Error('Failed to fetch training archives');
     const data = await resp.json();
     setArchives(data.archives || []);
@@ -92,7 +92,7 @@ export default function ModelPage() {
     setError(null);
     setSuccess(null);
     try {
-      const resp = await fetch(buildApiUrl('/api/model-registry/prepare'), {
+      const resp = await apiFetch(buildApiUrl('/api/model-registry/prepare'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -125,7 +125,7 @@ export default function ModelPage() {
     async (uri: string): Promise<boolean> => {
       setCheckingDataset(true);
       try {
-        const resp = await fetch(buildApiUrl('/api/training-data/coco/status'), {
+        const resp = await apiFetch(buildApiUrl('/api/training-data/coco/status'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dataset_uri: uri }),
@@ -192,7 +192,7 @@ export default function ModelPage() {
         batch_size: parseInt(batchSize, 10) || undefined,
       };
 
-      const resp = await fetch(buildApiUrl(`/api/model-registry/${lastModelVersion}/launch`), {
+      const resp = await apiFetch(buildApiUrl(`/api/model-registry/${lastModelVersion}/launch`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -212,7 +212,7 @@ export default function ModelPage() {
     setError(null);
     setSuccess(null);
     try {
-      const resp = await fetch(buildApiUrl(`/api/model-registry/${modelVersion}/promote`), {
+      const resp = await apiFetch(buildApiUrl(`/api/model-registry/${modelVersion}/promote`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: 'Promoted via admin UI' }),
@@ -232,7 +232,7 @@ export default function ModelPage() {
     setError(null);
     setSuccess(null);
     try {
-      const resp = await fetch(buildApiUrl(`/api/model-registry/${modelVersion}`), {
+      const resp = await apiFetch(buildApiUrl(`/api/model-registry/${modelVersion}`), {
         method: 'DELETE',
       });
       if (!resp.ok) throw new Error('Failed to delete model');
@@ -393,7 +393,7 @@ export default function ModelPage() {
               <button
                 onClick={launchBatchJob}
                 disabled={launchBusy || !datasetReady}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {launchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
                 {datasetReady ? 'Run Batch job' : 'Waiting for COCO tar...'}

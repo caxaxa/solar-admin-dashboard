@@ -14,8 +14,10 @@ import {
   Play,
   Eye,
   ExternalLink,
+  AlertTriangle,
+  X,
 } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 
 interface ELPipelineViewProps {
   orgId: string;
@@ -45,16 +47,19 @@ interface Stage {
   externalUrl?: string;
   secondaryActionLabel?: string;
   secondaryActionType?: string;
+  errorActionLabel?: string;
+  errorActionType?: string;
 }
 
 export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
   const [status, setStatus] = useState<ELProjectStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [pendingRelease, setPendingRelease] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
-      const resp = await fetch(
+      const resp = await apiFetch(
         buildApiUrl(`/el/projects/${orgId}/${projectId}/status?env=${env}`)
       );
       if (!resp.ok) throw new Error('Failed to fetch EL project status');
@@ -77,8 +82,16 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
     fetchStatus();
   }, [fetchStatus]);
 
+  const releaseActions = ['release', 'release-free', 'release-error'];
+
   const handleAction = async (actionType: string) => {
-    setActionLoading(true);
+    // Intercept release actions to show confirmation dialog
+    if (releaseActions.includes(actionType) && !pendingRelease) {
+      setPendingRelease(actionType);
+      return;
+    }
+
+    setActionLoading(actionType);
     try {
       let url: string;
       if (actionType === 'run-detections') {
@@ -89,29 +102,64 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
         url = buildApiUrl(`/el/projects/${orgId}/${projectId}/actions/${actionType}?env=${env}`);
       }
 
-      const resp = await fetch(url, { method: 'POST' });
+      const resp = await apiFetch(url, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        throw new Error(data.error || `Action '${actionType}' failed`);
+        throw new Error(data.error || data.message || `Action '${actionType}' failed`);
       }
 
       const data = await resp.json().catch(() => ({}));
+
       if (data.jobId) {
         alert(`Job submitted: ${data.jobId}`);
+      } else if (data.success) {
+        if ((actionType === 'release' || actionType === 'release-free') && data.training_data_archived) {
+          alert(`Project released successfully!\n\nTraining data archived:\n${data.archived_files?.length || 0} files copied to training bucket.`);
+        } else {
+          alert(data.message || `${actionType} completed successfully!`);
+        }
       }
 
       await fetchStatus();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Action failed');
     } finally {
-      setActionLoading(false);
+      setActionLoading(null);
     }
+  };
+
+  const confirmRelease = () => {
+    if (!pendingRelease) return;
+    const action = pendingRelease;
+    setPendingRelease(null);
+    handleAction(action);
+  };
+
+  const releaseConfig: Record<string, { title: string; description: string; confirmLabel: string; color: string }> = {
+    'release': {
+      title: 'Release with Paywall',
+      description: 'The client will need to pay to access the EL report. Training data (images + annotations) will be archived for model retraining.',
+      confirmLabel: 'Confirm Release',
+      color: 'bg-blue-600 hover:bg-blue-700',
+    },
+    'release-free': {
+      title: 'Release for Free',
+      description: 'The client will have free access to the EL report (paywall bypassed). Training data (images + annotations) will be archived for model retraining.',
+      confirmLabel: 'Confirm Free Release',
+      color: 'bg-blue-600 hover:bg-blue-700',
+    },
+    'release-error': {
+      title: 'Release with Error',
+      description: 'The client will be notified that EL processing failed for this project. No training data will be archived.',
+      confirmLabel: 'Confirm Error Release',
+      color: 'bg-red-600 hover:bg-red-700',
+    },
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         <span className="ml-2 text-gray-600">Loading project status...</span>
       </div>
     );
@@ -158,6 +206,12 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
       label: '5. Release to Client',
       icon: Send,
       isComplete: s.isReleased,
+      actionLabel: s.isReleased ? 'Released' : 'Release with Paywall',
+      actionType: s.isReleased ? undefined : 'release',
+      secondaryActionLabel: s.isReleased ? undefined : 'Release for Free',
+      secondaryActionType: s.isReleased ? undefined : 'release-free',
+      errorActionLabel: 'Release with Error',
+      errorActionType: s.isReleased ? undefined : 'release-error',
     },
   ];
 
@@ -195,7 +249,7 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
                     href={stage.externalUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-purple-600 text-white hover:bg-purple-700"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700"
                   >
                     <ExternalLink className="h-4 w-4" />
                     View PDF
@@ -206,21 +260,21 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
                 {stage.actionHref && (
                   <Link
                     href={stage.actionHref}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-orange-600 text-white hover:bg-orange-700"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700"
                   >
                     <Eye className="h-4 w-4" />
                     {stage.actionLabel}
                   </Link>
                 )}
 
-                {/* Secondary action (e.g. mark review complete) */}
-                {stage.secondaryActionType && !stage.isComplete && (
+                {/* Secondary action (e.g. mark review complete) — only for non-release stages */}
+                {stage.secondaryActionType && !stage.isComplete && stage.id !== 'release' && (
                   <button
                     onClick={() => handleAction(stage.secondaryActionType!)}
-                    disabled={actionLoading}
+                    disabled={actionLoading === stage.secondaryActionType}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
                   >
-                    {actionLoading ? (
+                    {actionLoading === stage.secondaryActionType ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <CheckCircle2 className="h-4 w-4" />
@@ -229,14 +283,14 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
                   </button>
                 )}
 
-                {/* API action (detect, generate-report) */}
-                {stage.actionType && (
+                {/* API action (detect, generate-report) — only for non-release stages */}
+                {stage.actionType && !stage.actionHref && stage.id !== 'release' && (
                   <button
                     onClick={() => handleAction(stage.actionType!)}
-                    disabled={actionLoading}
+                    disabled={actionLoading === stage.actionType}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {actionLoading ? (
+                    {actionLoading === stage.actionType ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <Play className="h-4 w-4" />
@@ -245,35 +299,52 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
                   </button>
                 )}
 
-                {/* Release actions */}
+                {/* Release stage actions */}
                 {stage.id === 'release' && !s.isReleased && (
                   <>
-                    <button
-                      onClick={() => handleAction('release')}
-                      disabled={actionLoading}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {actionLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
-                      )}
-                      Release with Paywall
-                    </button>
-                    <button
-                      onClick={() => handleAction('release-free')}
-                      disabled={actionLoading}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-                    >
-                      Release Free
-                    </button>
-                    <button
-                      onClick={() => handleAction('release-error')}
-                      disabled={actionLoading}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-                    >
-                      Release Error
-                    </button>
+                    {stage.actionType && (
+                      <button
+                        onClick={() => handleAction(stage.actionType!)}
+                        disabled={actionLoading === stage.actionType}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {actionLoading === stage.actionType ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                        {stage.actionLabel}
+                      </button>
+                    )}
+                    {stage.secondaryActionType && (
+                      <button
+                        onClick={() => handleAction(stage.secondaryActionType!)}
+                        disabled={actionLoading === stage.secondaryActionType}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+                      >
+                        {actionLoading === stage.secondaryActionType ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                        {stage.secondaryActionLabel}
+                      </button>
+                    )}
+                    {stage.errorActionType && (
+                      <button
+                        onClick={() => handleAction(stage.errorActionType!)}
+                        disabled={actionLoading === stage.errorActionType}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                        title="Release project with error notification to client"
+                      >
+                        {actionLoading === stage.errorActionType ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4" />
+                        )}
+                        {stage.errorActionLabel}
+                      </button>
+                    )}
                   </>
                 )}
               </div>
@@ -281,6 +352,53 @@ export function ELPipelineView({ orgId, projectId, env }: ELPipelineViewProps) {
           </div>
         );
       })}
+
+      {/* Release Confirmation Modal */}
+      {pendingRelease && releaseConfig[pendingRelease] && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-900">
+                {releaseConfig[pendingRelease].title}
+              </h2>
+              <button
+                onClick={() => setPendingRelease(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <Send className="h-8 w-8 text-gray-400" />
+                <p className="text-gray-700">
+                  {releaseConfig[pendingRelease].description}
+                </p>
+              </div>
+
+              <p className="text-sm text-gray-500 mb-6">
+                This action cannot be undone. Are you sure you want to proceed?
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setPendingRelease(null)}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmRelease}
+                  className={`flex-1 px-4 py-2 text-white rounded-lg transition-colors ${releaseConfig[pendingRelease].color}`}
+                >
+                  {releaseConfig[pendingRelease].confirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

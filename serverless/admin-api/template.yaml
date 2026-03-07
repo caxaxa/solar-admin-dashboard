@@ -37,6 +37,12 @@ Globals:
         EL_REPORTS_BUCKET_PROD: !Ref ELReportsBucketProd
         EL_REPORT_JOB_DEF_DEV: !Ref ELReportJobDefinitionDev
         EL_REPORT_JOB_DEF_PROD: !Ref ELReportJobDefinitionProd
+        IV_UPLOADS_BUCKET_DEV: !Ref IVUploadsBucketDev
+        IV_UPLOADS_BUCKET_PROD: !Ref IVUploadsBucketProd
+        IV_REPORTS_BUCKET_DEV: !Ref IVReportsBucketDev
+        IV_REPORTS_BUCKET_PROD: !Ref IVReportsBucketProd
+        IV_REPORT_JOB_DEF_DEV: !Ref IVReportJobDefinitionDev
+        IV_REPORT_JOB_DEF_PROD: !Ref IVReportJobDefinitionProd
 
 Parameters:
   SenderEmail:
@@ -141,8 +147,57 @@ Parameters:
   ELReportJobDefinitionProd:
     Type: String
     Default: solar-el-report-prod
+  IVUploadsBucketDev:
+    Type: String
+    Default: solar-iv-uploads-dev
+  IVUploadsBucketProd:
+    Type: String
+    Default: solar-iv-uploads-prod
+  IVReportsBucketDev:
+    Type: String
+    Default: solar-iv-reports-dev
+  IVReportsBucketProd:
+    Type: String
+    Default: solar-iv-reports-prod
+  IVReportJobDefinitionDev:
+    Type: String
+    Default: solar-iv-report-dev
+  IVReportJobDefinitionProd:
+    Type: String
+    Default: solar-iv-report-prod
 
 Resources:
+  # ── Lambda Authorizer ──
+
+  AuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: authorizer/index.handler
+      Timeout: 10
+      MemorySize: 128
+
+  AuthorizerInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeAuthorizerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt AuthorizerFunction.Arn
+
+  # ── HTTP API ──
+
   AdminHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -159,6 +214,16 @@ Resources:
           - PUT
           - DELETE
           - OPTIONS
+      Auth:
+        DefaultAuthorizer: LambdaAuthorizer
+        Authorizers:
+          LambdaAuthorizer:
+            FunctionArn: !GetAtt AuthorizerFunction.Arn
+            FunctionInvokeRole: !GetAtt AuthorizerInvokeRole.Arn
+            AuthorizerPayloadFormatVersion: "2.0"
+            EnableSimpleResponses: true
+            Identity:
+              ReauthorizeEvery: 0
 
   ProjectsFunction:
     Type: AWS::Serverless::Function
@@ -177,6 +242,8 @@ Resources:
                 - !Sub arn:aws:s3:::${OrthosBucketProd}
                 - !Sub arn:aws:s3:::${ELUploadsBucketDev}
                 - !Sub arn:aws:s3:::${ELUploadsBucketProd}
+                - !Sub arn:aws:s3:::${IVUploadsBucketDev}
+                - !Sub arn:aws:s3:::${IVUploadsBucketProd}
             - Effect: Allow
               Action:
                 - s3:GetObject
@@ -224,6 +291,8 @@ Resources:
             ApiId: !Ref AdminHttpApi
             Path: /auth/login
             Method: POST
+            Auth:
+              Authorizer: NONE
 
   CropAnnotationsFunction:
     Type: AWS::Serverless::Function
@@ -242,12 +311,18 @@ Resources:
                 - !Sub arn:aws:s3:::${OrthosBucketDev}/*
                 - !Sub arn:aws:s3:::${OrthosBucketProd}/*
       Events:
-        Api:
+        GetApi:
           Type: HttpApi
           Properties:
             ApiId: !Ref AdminHttpApi
             Path: /projects/{orgId}/{projectId}/crop-annotations
-            Method: ANY
+            Method: GET
+        PutApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/crop-annotations
+            Method: PUT
 
   DefectAnnotationsFunction:
     Type: AWS::Serverless::Function
@@ -268,12 +343,18 @@ Resources:
                 - !Sub arn:aws:s3:::${ReportsBucketDev}/*
                 - !Sub arn:aws:s3:::${ReportsBucketProd}/*
       Events:
-        Api:
+        GetApi:
           Type: HttpApi
           Properties:
             ApiId: !Ref AdminHttpApi
             Path: /projects/{orgId}/{projectId}/annotations
-            Method: ANY
+            Method: GET
+        PutApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /projects/{orgId}/{projectId}/annotations
+            Method: PUT
 
   ProjectStatusFunction:
     Type: AWS::Serverless::Function
@@ -776,12 +857,18 @@ Resources:
                 - !Sub arn:aws:s3:::${ELGroundtruthBucketDev}/*
                 - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}/*
       Events:
-        Api:
+        GetApi:
           Type: HttpApi
           Properties:
             ApiId: !Ref AdminHttpApi
             Path: /el/projects/{orgId}/{projectId}/annotations
-            Method: ANY
+            Method: GET
+        PutApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /el/projects/{orgId}/{projectId}/annotations
+            Method: PUT
 
   ELProjectActionsFunction:
     Type: AWS::Serverless::Function
@@ -797,6 +884,7 @@ Resources:
             - Effect: Allow
               Action:
                 - s3:PutObject
+                - s3:CopyObject
               Resource:
                 - arn:aws:s3:::solar-ai-training/*
             - Effect: Allow
@@ -809,10 +897,15 @@ Resources:
                 - !Sub arn:aws:s3:::${ELGroundtruthBucketProd}
                 - !Sub arn:aws:s3:::${ELReportsBucketDev}
                 - !Sub arn:aws:s3:::${ELReportsBucketProd}
+                - arn:aws:s3:::solar-ai-training
             - Effect: Allow
               Action:
+                - s3:GetObject
+                - s3:HeadObject
                 - s3:ListBucket
                 - s3:DeleteObject
+                - s3:PutObject
+                - s3:CopyObject
               Resource:
                 - !Sub arn:aws:s3:::${ELUploadsBucketDev}/*
                 - !Sub arn:aws:s3:::${ELUploadsBucketProd}/*
@@ -825,9 +918,19 @@ Resources:
                 - dynamodb:GetItem
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
+                - dynamodb:Query
               Resource:
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+                - cognito-idp:ListUsersInGroup
+              Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: '*'
       Events:
         Api:
           Type: HttpApi
@@ -868,6 +971,130 @@ Resources:
           Properties:
             ApiId: !Ref AdminHttpApi
             Path: /el/projects/{orgId}/{projectId}/status
+            Method: GET
+
+  # ── IV Curve Lambda Functions ──
+
+  IVProjectStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: iv-project-status/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${IVUploadsBucketDev}
+                - !Sub arn:aws:s3:::${IVUploadsBucketDev}/*
+                - !Sub arn:aws:s3:::${IVUploadsBucketProd}
+                - !Sub arn:aws:s3:::${IVUploadsBucketProd}/*
+                - !Sub arn:aws:s3:::${IVReportsBucketDev}
+                - !Sub arn:aws:s3:::${IVReportsBucketDev}/*
+                - !Sub arn:aws:s3:::${IVReportsBucketProd}
+                - !Sub arn:aws:s3:::${IVReportsBucketProd}/*
+                - arn:aws:s3:::solar-ai-training
+                - arn:aws:s3:::solar-ai-training/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /iv/projects/{orgId}/{projectId}/status
+            Method: GET
+
+  IVProjectActionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: iv-project-actions/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - batch:SubmitJob
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:CopyObject
+              Resource:
+                - arn:aws:s3:::solar-ai-training/*
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${IVUploadsBucketDev}
+                - !Sub arn:aws:s3:::${IVUploadsBucketProd}
+                - !Sub arn:aws:s3:::${IVReportsBucketDev}
+                - !Sub arn:aws:s3:::${IVReportsBucketProd}
+                - arn:aws:s3:::solar-ai-training
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:HeadObject
+                - s3:ListBucket
+                - s3:DeleteObject
+                - s3:PutObject
+                - s3:CopyObject
+              Resource:
+                - !Sub arn:aws:s3:::${IVUploadsBucketDev}/*
+                - !Sub arn:aws:s3:::${IVUploadsBucketProd}/*
+                - !Sub arn:aws:s3:::${IVReportsBucketDev}/*
+                - !Sub arn:aws:s3:::${IVReportsBucketProd}/*
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+                - cognito-idp:ListUsersInGroup
+              Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: '*'
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /iv/projects/{orgId}/{projectId}/actions/{action}
+            Method: POST
+
+  IVDataReviewFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: iv-data-review/index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${IVUploadsBucketDev}
+                - !Sub arn:aws:s3:::${IVUploadsBucketProd}
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - !Sub arn:aws:s3:::${IVUploadsBucketDev}/*
+                - !Sub arn:aws:s3:::${IVUploadsBucketProd}/*
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /iv/projects/{orgId}/{projectId}/data-review
             Method: GET
 
 Outputs:

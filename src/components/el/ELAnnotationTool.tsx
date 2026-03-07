@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Canvas, Rect, Image as FabricImage, Point } from 'fabric';
+import { Canvas, Rect, Image as FabricImage, Point, type TPointerEventInfo } from 'fabric';
 import {
   Save,
   Loader2,
@@ -17,7 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 
 interface ELAnnotationToolProps {
   orgId: string;
@@ -44,13 +44,18 @@ const LABEL_CONFIG: Record<DefectLabel, { color: string; display: string; key: s
 const LABELS = Object.keys(LABEL_CONFIG) as DefectLabel[];
 const DEFAULT_LABEL: DefectLabel = 'crack';
 
+/** Fabric.js Rect with an attached label property for defect type */
+interface LabeledRect extends Rect {
+  label?: string;
+}
+
 function labelColor(label: string): string {
   return (LABEL_CONFIG as Record<string, { color: string }>)[label]?.color ?? '#ef4444';
 }
 
-function createAnnotationRect(box: { left: number; top: number; width: number; height: number; label: string }): Rect {
+function createAnnotationRect(box: { left: number; top: number; width: number; height: number; label: string }): LabeledRect {
   const color = labelColor(box.label);
-  const rect = new Rect({
+  const rect: LabeledRect = new Rect({
     left: box.left,
     top: box.top,
     width: box.width,
@@ -62,23 +67,24 @@ function createAnnotationRect(box: { left: number; top: number; width: number; h
     cornerSize: 8,
     transparentCorners: false,
   });
-  (rect as any).label = box.label;
+  rect.label = box.label;
   return rect;
 }
 
 export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const fabricCanvasRef = useRef<Canvas | null>(null);
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [boxCount, setBoxCount] = useState(0);
   const [zoom, setZoom] = useState(1);
-  const [imageLoaded, setImageLoaded] = useState(false);
+  const [, setImageLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPanMode, setIsPanMode] = useState(false);
   const [isDrawMode, setIsDrawMode] = useState(true);
   const [activeLabel, setActiveLabel] = useState<DefectLabel>(DEFAULT_LABEL);
+  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Image navigation state
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -87,11 +93,16 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
 
   // Drawing refs
   const isDrawingRef = useRef(false);
+  const isPanModeRef = useRef(false);
   const isPanningRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const startPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentRectRef = useRef<Rect | null>(null);
   const activeLabelRef = useRef<DefectLabel>(DEFAULT_LABEL);
+
+  // Generation counter — incremented on every loadImage call and on canvas
+  // disposal so that stale img.onload callbacks are discarded.
+  const loadGenRef = useRef(0);
 
   // Undo/Redo
   const undoStackRef = useRef<string[]>([]);
@@ -123,12 +134,18 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           left: obj.left, top: obj.top,
           width: (obj as Rect).width * (obj.scaleX || 1),
           height: (obj as Rect).height * (obj.scaleY || 1),
-          label: (obj as any).label || DEFAULT_LABEL,
+          label: (obj as LabeledRect).label || DEFAULT_LABEL,
         }))
     );
     undoStackRef.current.push(state);
     redoStackRef.current = [];
   }, []);
+
+  // Stable refs so the canvas init effect never re-runs when these change
+  const saveUndoStateRef = useRef(saveUndoState);
+  useEffect(() => { saveUndoStateRef.current = saveUndoState; }, [saveUndoState]);
+  const updateBoxCountRef = useRef(updateBoxCount);
+  useEffect(() => { updateBoxCountRef.current = updateBoxCount; }, [updateBoxCount]);
 
   const collectBoxes = useCallback((): BoundingBox[] => {
     const canvas = fabricCanvasRef.current;
@@ -140,7 +157,7 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
         top: Math.round(obj.top!),
         width: Math.round((obj as Rect).width! * (obj.scaleX || 1)),
         height: Math.round((obj as Rect).height! * (obj.scaleY || 1)),
-        label: (obj as any).label || DEFAULT_LABEL,
+        label: (obj as LabeledRect).label || DEFAULT_LABEL,
       }));
   }, []);
 
@@ -150,26 +167,34 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
     if (!canvas) return {};
     const counts: Record<string, number> = {};
     canvas.getObjects().filter(obj => obj.type === 'rect').forEach(obj => {
-      const lbl = (obj as any).label || DEFAULT_LABEL;
+      const lbl = (obj as LabeledRect).label || DEFAULT_LABEL;
       counts[lbl] = (counts[lbl] || 0) + 1;
     });
     return counts;
   }, []);
 
-  // Load image + annotations for a given index
+  // Load image + annotations for a given index.
+  // Returns a Promise that resolves when the image has fully loaded (or failed).
   const loadImage = useCallback(async (imageIndex: number) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
+
+    // Bump generation so any in-flight img.onload from a previous call is
+    // ignored when it eventually fires.
+    const gen = ++loadGenRef.current;
 
     setLoading(true);
     setError(null);
 
     try {
-      const resp = await fetch(
+      const resp = await apiFetch(
         buildApiUrl(`/el/projects/${orgId}/${projectId}/annotations?env=${env}&imageIndex=${imageIndex}`)
       );
       if (!resp.ok) throw new Error('Failed to load EL image data');
       const data = await resp.json();
+
+      // Stale check: another loadImage call may have started while we awaited
+      if (gen !== loadGenRef.current) return;
 
       setTotalImages(data.totalImages || 0);
       setCurrentIndex(data.currentIndex ?? imageIndex);
@@ -180,69 +205,95 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
 
       // Load image onto canvas
       if (data.imageUrl) {
-        const img = new window.Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          const fabricImg = new FabricImage(img);
-          const containerWidth = canvas.getWidth();
-          const containerHeight = canvas.getHeight();
-          const scale = Math.min(
-            containerWidth / img.width,
-            containerHeight / img.height,
-            1
-          );
-          fabricImg.set({
-            left: 0, top: 0,
-            scaleX: scale, scaleY: scale,
-            selectable: false, evented: false,
-          });
-          canvas.insertAt(0, fabricImg);
+        await new Promise<void>((resolve) => {
+          const img = new window.Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            // Stale / disposed check — if the user navigated away or the
+            // canvas was disposed before this image loaded, bail out.
+            if (gen !== loadGenRef.current || !fabricCanvasRef.current) {
+              resolve();
+              return;
+            }
 
-          // Load bounding boxes
-          const boxes: BoundingBox[] = data.annotations?.boundingBoxes || [];
-          boxes.forEach(box => {
-            // Migrate legacy "defects" label to "crack"
-            const label = box.label === 'defects' ? 'crack' : box.label;
-            canvas.add(createAnnotationRect({
-              left: box.left * scale,
-              top: box.top * scale,
-              width: box.width * scale,
-              height: box.height * scale,
-              label,
-            }));
-          });
+            const fabricImg = new FabricImage(img);
+            const containerWidth = canvas.getWidth();
+            const containerHeight = canvas.getHeight();
+            const scale = Math.min(
+              containerWidth / img.width,
+              containerHeight / img.height,
+              1
+            );
+            fabricImg.set({
+              left: 0, top: 0,
+              scaleX: scale, scaleY: scale,
+              selectable: false, evented: false,
+            });
+            canvas.insertAt(0, fabricImg);
 
-          canvas.renderAll();
-          setImageLoaded(true);
-          setZoom(1);
-          updateBoxCount();
-          undoStackRef.current = [];
-          redoStackRef.current = [];
-          setLoading(false);
-        };
-        img.onerror = () => {
-          setError('Failed to load image');
-          setLoading(false);
-        };
-        img.src = data.imageUrl;
+            // Load bounding boxes
+            const boxes: BoundingBox[] = data.annotations?.boundingBoxes || [];
+            boxes.forEach(box => {
+              // Migrate legacy "defects" label to "crack"
+              const label = box.label === 'defects' ? 'crack' : box.label;
+              canvas.add(createAnnotationRect({
+                left: box.left * scale,
+                top: box.top * scale,
+                width: box.width * scale,
+                height: box.height * scale,
+                label,
+              }));
+            });
+
+            canvas.renderAll();
+            setImageLoaded(true);
+            setZoom(1);
+            updateBoxCountRef.current();
+            undoStackRef.current = [];
+            redoStackRef.current = [];
+            setLoading(false);
+            resolve();
+          };
+          img.onerror = () => {
+            if (gen !== loadGenRef.current) {
+              resolve();
+              return;
+            }
+            setError('Failed to load image');
+            setLoading(false);
+            resolve();
+          };
+          img.src = data.imageUrl;
+        });
       } else {
         setError('No image URL received');
         setLoading(false);
       }
     } catch (err) {
+      if (gen !== loadGenRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load image');
       setLoading(false);
     }
-  }, [orgId, projectId, env, updateBoxCount]);
+  }, [orgId, projectId, env]);
 
-  // Initialize canvas
+  // Stable ref for loadImage so the canvas init effect never re-runs
+  const loadImageRef = useRef(loadImage);
+  useEffect(() => { loadImageRef.current = loadImage; }, [loadImage]);
+
+  // Initialize canvas — only depends on mounted, never re-runs
   useEffect(() => {
-    if (!mounted || !canvasRef.current || fabricCanvasRef.current) return;
+    if (!mounted || !canvasWrapperRef.current || fabricCanvasRef.current) return;
 
-    const container = canvasRef.current.parentElement;
-    if (!container) return;
+    const container = canvasWrapperRef.current;
 
-    const canvas = new Canvas(canvasRef.current, {
+    // Create canvas element imperatively so React never manages it.
+    // Fabric.js wraps the canvas in its own container div and adds sibling
+    // elements — if React tries to reconcile those, it crashes with
+    // "insertBefore" errors.
+    const canvasEl = document.createElement('canvas');
+    container.appendChild(canvasEl);
+
+    const canvas = new Canvas(canvasEl, {
       width: container.clientWidth,
       height: container.clientHeight,
       selection: true,
@@ -251,19 +302,22 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
     fabricCanvasRef.current = canvas;
 
     // Mouse down - start drawing or panning
-    canvas.on('mouse:down', (opt: any) => {
+    canvas.on('mouse:down', (opt: TPointerEventInfo) => {
       if (isPanningRef.current) return;
       const evt = opt.e as MouseEvent;
 
-      if (evt.altKey || !isDrawingRef.current) {
-        // Pan mode
+      // Alt+drag always pans, regardless of mode
+      if (evt.altKey || isPanModeRef.current) {
         isPanningRef.current = true;
         lastPosRef.current = { x: evt.clientX, y: evt.clientY };
         canvas.selection = false;
         return;
       }
 
+      // Select mode: let Fabric.js handle selection naturally (no custom code needed)
       if (!isDrawingRef.current) return;
+
+      // Draw mode: don't draw on top of existing annotations
       if (opt.target && opt.target.type === 'rect') return;
 
       const pointer = canvas.getScenePoint(opt.e);
@@ -282,7 +336,7 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
     });
 
     // Mouse move - resize rectangle or pan
-    canvas.on('mouse:move', (opt: any) => {
+    canvas.on('mouse:move', (opt: TPointerEventInfo) => {
       const evt = opt.e as MouseEvent;
 
       if (isPanningRef.current && lastPosRef.current) {
@@ -322,16 +376,16 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
         if (rect.width! < 5 || rect.height! < 5) {
           canvas.remove(rect);
         } else {
-          saveUndoState();
+          saveUndoStateRef.current();
         }
         currentRectRef.current = null;
         startPointRef.current = null;
-        updateBoxCount();
+        updateBoxCountRef.current();
       }
     });
 
     // Mouse wheel zoom
-    canvas.on('mouse:wheel', (opt: any) => {
+    canvas.on('mouse:wheel', (opt: TPointerEventInfo<WheelEvent>) => {
       const evt = opt.e as WheelEvent;
       evt.preventDefault();
       const delta = evt.deltaY;
@@ -342,17 +396,43 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
       setZoom(newZoom);
     });
 
-    loadImage(0);
+    // Load first image
+    loadImageRef.current(0);
 
     return () => {
+      // Invalidate any pending img.onload callbacks before disposing
+      loadGenRef.current++;
       canvas.dispose();
       fabricCanvasRef.current = null;
+      // Remove all imperatively created DOM nodes from the wrapper
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
     };
-  }, [mounted, loadImage, saveUndoState, updateBoxCount]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted]);
 
-  // Keep draw mode ref in sync
+  // Keep mode refs in sync and configure canvas selection/selectability
   useEffect(() => {
     isDrawingRef.current = isDrawMode && !isPanMode;
+    isPanModeRef.current = isPanMode;
+
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    // In Select mode: enable canvas selection (drag to multi-select) and make rects selectable
+    // In Draw mode: disable selection so drawing works freely
+    // In Pan mode: disable selection
+    const isSelectMode = !isDrawMode && !isPanMode;
+    canvas.selection = isSelectMode;
+
+    canvas.getObjects().forEach(obj => {
+      if (obj.type === 'rect') {
+        obj.selectable = isSelectMode;
+        obj.evented = !isPanMode;
+      }
+    });
+    canvas.renderAll();
   }, [isDrawMode, isPanMode]);
 
   // Save annotations for current image
@@ -374,10 +454,10 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           top: Math.round(obj.top! / scale),
           width: Math.round((obj as Rect).width! * (obj.scaleX || 1) / scale),
           height: Math.round((obj as Rect).height! * (obj.scaleY || 1) / scale),
-          label: (obj as any).label || DEFAULT_LABEL,
+          label: (obj as LabeledRect).label || DEFAULT_LABEL,
         }));
 
-      const resp = await fetch(
+      const resp = await apiFetch(
         buildApiUrl(`/el/projects/${orgId}/${projectId}/annotations?env=${env}&imageIndex=${currentIndex}`),
         {
           method: 'PUT',
@@ -386,20 +466,32 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
         }
       );
       if (!resp.ok) throw new Error('Failed to save annotations');
+      setSaveMessage({ type: 'success', text: `Saved ${boxes.length} annotation${boxes.length !== 1 ? 's' : ''} successfully` });
+      setTimeout(() => setSaveMessage(null), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      const msg = err instanceof Error ? err.message : 'Save failed';
+      setError(msg);
+      setSaveMessage({ type: 'error', text: msg });
+      setTimeout(() => setSaveMessage(null), 5000);
     } finally {
       setSaving(false);
     }
   }, [orgId, projectId, env, currentIndex]);
 
-  // Navigation
+  // Navigation — awaits full image load before releasing the guard
+  const navigatingRef = useRef(false);
   const goToImage = useCallback(async (index: number) => {
     if (index < 0 || index >= totalImages) return;
-    // Auto-save current before navigating
-    await handleSave();
-    setCurrentIndex(index);
-    loadImage(index);
+    if (navigatingRef.current) return; // prevent double-click race
+    navigatingRef.current = true;
+    try {
+      // Auto-save current before navigating
+      await handleSave();
+      setCurrentIndex(index);
+      await loadImage(index);
+    } finally {
+      navigatingRef.current = false;
+    }
   }, [totalImages, handleSave, loadImage]);
 
   // Zoom controls
@@ -483,6 +575,21 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
         e.preventDefault();
         goToImage(currentIndex + 1);
       }
+      // Tool shortcuts
+      if (e.key === 'p' || e.key === 'P') {
+        setIsPanMode(true);
+        setIsDrawMode(false);
+      }
+      if (e.key === 'b' || e.key === 'B') {
+        setIsDrawMode(true);
+        setIsPanMode(false);
+      }
+      if (e.key === 's' || e.key === 'S') {
+        if (!e.ctrlKey && !e.metaKey) {
+          setIsDrawMode(false);
+          setIsPanMode(false);
+        }
+      }
       // Label shortcuts: 1 = crack, 2 = micro-crack
       if (e.key === '1') setActiveLabel('crack');
       if (e.key === '2') setActiveLabel('micro-crack');
@@ -491,7 +598,16 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave, handleUndo, handleRedo, handleDelete, goToImage, currentIndex]);
 
-  if (!mounted) return null;
+  // Fix 2: Render a loading placeholder instead of null to avoid tree swap
+  if (!mounted) {
+    return (
+      <div className="flex flex-col h-full bg-gray-900">
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        </div>
+      </div>
+    );
+  }
 
   const counts = countByLabel();
 
@@ -510,9 +626,22 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
-            <span className="text-sm text-gray-300 min-w-[100px] text-center">
-              {totalImages > 0 ? `${currentIndex + 1} / ${totalImages}` : '...'}
-            </span>
+            {totalImages > 0 ? (
+              <select
+                value={currentIndex}
+                onChange={(e) => goToImage(Number(e.target.value))}
+                disabled={loading}
+                className="bg-gray-700 text-gray-300 text-sm border border-gray-600 rounded px-2 py-1 min-w-[120px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+              >
+                {Array.from({ length: totalImages }, (_, i) => (
+                  <option key={i} value={i}>
+                    Image {i + 1} / {totalImages}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-sm text-gray-300 min-w-[100px] text-center">...</span>
+            )}
             <button
               onClick={() => goToImage(currentIndex + 1)}
               disabled={currentIndex >= totalImages - 1 || loading}
@@ -530,21 +659,21 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
             onClick={() => { setIsDrawMode(true); setIsPanMode(false); }}
             className={`p-2 rounded ${isDrawMode && !isPanMode ? 'text-white' : 'text-gray-300 hover:bg-gray-700'}`}
             style={isDrawMode && !isPanMode ? { backgroundColor: labelColor(activeLabel) } : undefined}
-            title="Draw box"
+            title="Draw box (B)"
           >
             <Square className="h-4 w-4" />
           </button>
           <button
             onClick={() => { setIsDrawMode(false); setIsPanMode(false); }}
             className={`p-2 rounded ${!isDrawMode && !isPanMode ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
-            title="Select mode"
+            title="Select mode (S)"
           >
             <Pointer className="h-4 w-4" />
           </button>
           <button
             onClick={() => { setIsPanMode(true); setIsDrawMode(false); }}
             className={`p-2 rounded ${isPanMode ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
-            title="Pan mode (Alt+drag always pans)"
+            title="Pan mode (P) — Alt+drag always pans"
           >
             <Hand className="h-4 w-4" />
           </button>
@@ -605,14 +734,14 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           <span className="text-xs text-gray-400 truncate max-w-[200px]">
             {currentFilename}
           </span>
-          {/* Per-label counts */}
+          {/* Per-label counts — always rendered, hidden via CSS to keep DOM stable */}
           {LABELS.map(label => {
             const c = counts[label] || 0;
-            if (c === 0 && boxCount === 0) return null;
+            const visible = c > 0 || boxCount > 0;
             return (
               <span
                 key={label}
-                className="text-xs font-medium"
+                className={`text-xs font-medium ${visible ? '' : 'hidden'}`}
                 style={{ color: LABEL_CONFIG[label].color }}
               >
                 {c} {LABEL_CONFIG[label].display.toLowerCase()}
@@ -622,6 +751,11 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
 
           {error && (
             <span className="text-xs text-red-400">{error}</span>
+          )}
+          {saveMessage && (
+            <span className={`text-xs font-medium ${saveMessage.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
+              {saveMessage.text}
+            </span>
           )}
 
           {/* Save */}
@@ -636,15 +770,19 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
         </div>
       </div>
 
-      {/* Canvas */}
+      {/* Canvas — the loading overlay is always rendered (visibility toggled
+          via CSS) so React never inserts/removes DOM siblings next to the
+          <canvas>, which Fabric.js wraps in its own container. */}
       <div className="flex-1 relative overflow-hidden">
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center z-10 bg-gray-900/80">
-            <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
-            <span className="ml-2 text-gray-300">Loading image...</span>
-          </div>
-        )}
-        <canvas ref={canvasRef} />
+        <div
+          className={`absolute inset-0 flex items-center justify-center z-10 bg-gray-900/80 transition-opacity duration-150 ${
+            loading ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <span className="ml-2 text-gray-300">Loading image...</span>
+        </div>
+        <div ref={canvasWrapperRef} className="absolute inset-0" />
       </div>
     </div>
   );

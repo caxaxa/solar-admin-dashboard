@@ -196,9 +196,8 @@ exports.handler = async (event) => {
       // Collect project IDs per environment before enriching with metadata
       const envProjects = [];
 
-      // EL projects don't live in orthos buckets — skip S3 scan for EL-only requests
-      if (typeFilter !== 'el') {
-        // Get processed projects from S3 (have orthophotos)
+      // Thermographic projects: scan orthos bucket (default, no type filter or type=thermographic)
+      if (!typeFilter || typeFilter === 'thermographic') {
         const organizations = await listOrgsFromBucket(bucket);
         for (const orgId of organizations) {
           if (!orgId.includes('-')) continue;
@@ -210,7 +209,7 @@ exports.handler = async (event) => {
         }
       }
 
-      // EL projects: scan EL uploads bucket instead of orthos bucket
+      // EL projects: scan EL uploads bucket
       if (typeFilter === 'el') {
         const elBucket = process.env[`EL_UPLOADS_BUCKET_${envConfig.name.toUpperCase()}`];
         if (elBucket) {
@@ -224,7 +223,25 @@ exports.handler = async (event) => {
               }
             }
           } catch (err) {
-            // Bucket may not exist yet for this environment (e.g. prod)
+            if (err.code !== 'NoSuchBucket') throw err;
+          }
+        }
+      }
+
+      // IV projects: scan IV uploads bucket
+      if (typeFilter === 'iv') {
+        const ivBucket = process.env[`IV_UPLOADS_BUCKET_${envConfig.name.toUpperCase()}`];
+        if (ivBucket) {
+          try {
+            const organizations = await listOrgsFromBucket(ivBucket);
+            for (const orgId of organizations) {
+              if (!orgId.includes('-')) continue;
+              const projects = await listProjectsFromBucket(ivBucket, orgId);
+              for (const projectId of projects) {
+                envProjects.push({ orgId, projectId });
+              }
+            }
+          } catch (err) {
             if (err.code !== 'NoSuchBucket') throw err;
           }
         }
@@ -243,9 +260,10 @@ exports.handler = async (event) => {
 
         const meta = metadataMap[projectId] || {};
 
-        // Skip EL projects in thermographic listing (and vice versa)
-        if (typeFilter === 'el' && meta.project_type !== 'el') continue;
-        if (typeFilter !== 'el' && meta.project_type === 'el') continue;
+        // Filter by project type
+        const metaType = meta.project_type || 'thermographic';
+        if (typeFilter && metaType !== typeFilter) continue;
+        if (!typeFilter && metaType !== 'thermographic') continue;
 
         // Flag entries that exist in S3 but have no Dynamo metadata as deleted/unknown
         if (!meta.project_id) {
@@ -286,8 +304,9 @@ exports.handler = async (event) => {
         }
 
         // Filter pending projects by type too
-        if (typeFilter === 'el' && project.projectType !== 'el') continue;
-        if (typeFilter !== 'el' && project.projectType === 'el') continue;
+        const pendingType = project.projectType || 'thermographic';
+        if (typeFilter && pendingType !== typeFilter) continue;
+        if (!typeFilter && pendingType !== 'thermographic') continue;
 
         pendingProjects.push(project);
       }

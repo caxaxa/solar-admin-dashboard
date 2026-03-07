@@ -22,7 +22,7 @@ export default function DashboardPage() {
               className="group block bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 p-6 hover:border-blue-400 hover:shadow-lg transition-all"
             >
               <div className="flex items-center gap-3 mb-3">
-                <FolderKanban className="h-8 w-8 text-orange-500" />
+                <FolderKanban className="h-8 w-8 text-blue-500" />
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 group-hover:text-blue-600">
                   Thermographic
                 </h3>
@@ -36,7 +36,7 @@ export default function DashboardPage() {
               className="group block bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 p-6 hover:border-blue-400 hover:shadow-lg transition-all"
             >
               <div className="flex items-center gap-3 mb-3">
-                <Zap className="h-8 w-8 text-purple-500" />
+                <Zap className="h-8 w-8 text-blue-500" />
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 group-hover:text-blue-600">
                   Electroluminescence
                 </h3>

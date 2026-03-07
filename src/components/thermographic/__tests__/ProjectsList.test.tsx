@@ -15,7 +15,7 @@ vi.mock('next/link', () => ({
 vi.mock('lucide-react', () => ({
   FolderOpen: () => <span>FolderOpen</span>,
   ChevronRight: () => <span>&gt;</span>,
-  Loader2: ({ className }: any) => <span className={className}>Loading</span>,
+  Loader2: ({ className }: { className?: string }) => <span className={className}>Loading</span>,
   Plus: () => <span>+</span>,
   Play: () => <span>Play</span>,
   Clock: () => <span>Clock</span>,
@@ -24,18 +24,16 @@ vi.mock('lucide-react', () => ({
 }))
 
 // Mock api-client
+const mockFetch = vi.fn()
 vi.mock('@/lib/api-client', () => ({
   buildApiUrl: (path: string) => `http://localhost:3001${path}`,
+  apiFetch: (...args: unknown[]) => mockFetch(...args),
 }))
 
 // Mock CreateProjectModal
 vi.mock('../../shared/CreateProjectModal', () => ({
   CreateProjectModal: () => <div data-testid="create-modal" />,
 }))
-
-// Mock fetch
-const mockFetch = vi.fn()
-globalThis.fetch = mockFetch
 
 // Mock localStorage
 const localStorageMock = {
@@ -149,7 +147,7 @@ describe('ProjectsList', () => {
 
     render(<ProjectsList />)
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:3001/projects')
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:3001/projects?type=thermographic')
     })
   })
 })

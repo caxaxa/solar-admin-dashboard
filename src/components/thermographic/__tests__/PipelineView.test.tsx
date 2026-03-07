@@ -3,7 +3,6 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 
 // Mock next/link
 vi.mock('next/link', () => ({
@@ -23,7 +22,7 @@ vi.mock('lucide-react', () => ({
   Send: () => <span>Send</span>,
   CheckCircle2: () => <span data-testid="check-icon">✓</span>,
   Circle: () => <span data-testid="circle-icon">○</span>,
-  Loader2: ({ className }: any) => <span className={className}>Loading</span>,
+  Loader2: ({ className }: { className?: string }) => <span className={className}>Loading</span>,
   Play: () => <span>Play</span>,
   Edit3: () => <span>Edit</span>,
   Eye: () => <span>Eye</span>,
@@ -35,13 +34,11 @@ vi.mock('lucide-react', () => ({
 }))
 
 // Mock api-client
+const mockFetch = vi.fn()
 vi.mock('@/lib/api-client', () => ({
   buildApiUrl: (path: string) => `http://localhost:3001${path}`,
+  apiFetch: (...args: unknown[]) => mockFetch(...args),
 }))
-
-// Mock fetch
-const mockFetch = vi.fn()
-globalThis.fetch = mockFetch
 
 import { PipelineView } from '../PipelineView'
 

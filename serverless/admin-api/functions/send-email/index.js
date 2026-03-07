@@ -300,6 +300,215 @@ ${COMPANY_NAME}
 Este e um email automatico, por favor nao responda.
     `,
   }),
+
+  elProjectReleased: (data) => ({
+    subject: `${COMPANY_NAME} - Relatorio de Eletroluminescencia Pronto: ${data.projectName}`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+    .header h1 { margin: 0; font-size: 24px; }
+    .content { background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; }
+    .success-icon { font-size: 48px; margin-bottom: 10px; }
+    .project-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .project-name { font-size: 20px; font-weight: bold; color: #111827; margin-bottom: 10px; }
+    .project-id { font-family: monospace; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: #6b7280; }
+    .status-complete { color: #059669; font-weight: bold; }
+    .button { display: inline-block; background: #10b981; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; margin-top: 20px; }
+    .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }
+    .highlight { background: #dcfce7; border-left: 4px solid #10b981; padding: 15px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="success-icon">&#10004;</div>
+      <h1>Relatorio de Eletroluminescencia Pronto!</h1>
+    </div>
+    <div class="content">
+      <p>Otimas noticias!</p>
+
+      <div class="highlight">
+        <p style="margin: 0;"><strong>O relatorio de eletroluminescencia do seu projeto esta pronto para download!</strong></p>
+      </div>
+
+      <div class="project-card">
+        <div class="project-name">${data.projectName}</div>
+        <p><strong>ID do Projeto:</strong> <span class="project-id">${data.projectId}</span></p>
+        <p><strong>Status:</strong> <span class="status-complete">Concluido</span></p>
+        <p><strong>Liberado em:</strong> ${new Date().toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })}</p>
+      </div>
+
+      <p>O relatorio inclui:</p>
+      <ul>
+        <li>Analise de eletroluminescencia completa</li>
+        <li>Identificacao de defeitos em celulas</li>
+        <li>Mapa de defeitos por modulo</li>
+        <li>Classificacao de aprovacao/reprovacao</li>
+      </ul>
+
+      <a href="${PLATFORM_URL}/projects/${data.projectId}" class="button">Baixar Relatorio</a>
+
+      <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
+        Se tiver alguma duvida sobre o relatorio, entre em contato com nossa equipe de suporte.
+      </p>
+    </div>
+    <div class="footer">
+      <p>&copy; ${new Date().getFullYear()} ${COMPANY_NAME}. Todos os direitos reservados.</p>
+      <p>Este e um email automatico, por favor nao responda.</p>
+    </div>
+  </div>
+</body>
+</html>
+    `,
+    text: `
+${COMPANY_NAME} - Relatorio de Eletroluminescencia Pronto!
+
+Otimas noticias!
+
+O relatorio de eletroluminescencia do seu projeto esta pronto para download!
+
+Projeto: ${data.projectName}
+ID: ${data.projectId}
+Status: Concluido
+Liberado em: ${new Date().toLocaleDateString('pt-BR')}
+
+O relatorio inclui:
+- Analise de eletroluminescencia completa
+- Identificacao de defeitos em celulas
+- Mapa de defeitos por modulo
+- Classificacao de aprovacao/reprovacao
+
+Acesse: ${PLATFORM_URL}/projects/${data.projectId}
+
+---
+${COMPANY_NAME}
+Este e um email automatico, por favor nao responda.
+    `,
+  }),
+
+  elProjectReleasedWithError: (data) => ({
+    subject: `${COMPANY_NAME} - Aviso sobre seu Projeto EL: ${data.projectName}`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+    .header h1 { margin: 0; font-size: 24px; }
+    .content { background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; }
+    .warning-icon { font-size: 48px; margin-bottom: 10px; }
+    .project-card { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .project-name { font-size: 20px; font-weight: bold; color: #111827; margin-bottom: 10px; }
+    .project-id { font-family: monospace; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: #6b7280; }
+    .status-error { color: #dc2626; font-weight: bold; }
+    .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }
+    .alert-box { background: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+    .contact-box { background: #eff6ff; border: 1px solid #bfdbfe; padding: 20px; border-radius: 8px; margin: 20px 0; }
+    .contact-box h3 { margin: 0 0 10px 0; color: #1e40af; }
+    .contact-item { margin: 8px 0; }
+    .contact-item strong { color: #1e40af; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="warning-icon">&#9888;</div>
+      <h1>Aviso Importante sobre seu Projeto</h1>
+    </div>
+    <div class="content">
+      <p>Prezado cliente,</p>
+
+      <div class="alert-box">
+        <p style="margin: 0;"><strong>Infelizmente, nao foi possivel processar o relatorio de eletroluminescencia do seu projeto com os arquivos fornecidos.</strong></p>
+      </div>
+
+      <div class="project-card">
+        <div class="project-name">${data.projectName}</div>
+        <p><strong>ID do Projeto:</strong> <span class="project-id">${data.projectId}</span></p>
+        <p><strong>Status:</strong> <span class="status-error">Nao Processado</span></p>
+        <p><strong>Data:</strong> ${new Date().toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric'
+        })}</p>
+      </div>
+
+      <p>Isso pode ter ocorrido por diversos motivos, como:</p>
+      <ul>
+        <li>Qualidade insuficiente das imagens de eletroluminescencia</li>
+        <li>Problemas na deteccao de defeitos nas celulas</li>
+        <li>Formato de arquivo incompativel</li>
+        <li>Imagens com resolucao muito baixa</li>
+      </ul>
+
+      <div class="contact-box">
+        <h3>Entre em Contato Conosco</h3>
+        <p>Nossa equipe esta pronta para ajuda-lo a resolver esta situacao:</p>
+        <div class="contact-item">
+          <strong>Email:</strong> suporte@aisol.cloud
+        </div>
+        <div class="contact-item">
+          <strong>WhatsApp:</strong> +55 (67) 99699-6672
+        </div>
+        <div class="contact-item">
+          <strong>Horario:</strong> Segunda a Sexta, 9h as 18h
+        </div>
+      </div>
+
+      <p>Pedimos desculpas pelo inconveniente e estamos a disposicao para auxiliar no reenvio das imagens ou esclarecer qualquer duvida.</p>
+    </div>
+    <div class="footer">
+      <p>&copy; ${new Date().getFullYear()} ${COMPANY_NAME}. Todos os direitos reservados.</p>
+      <p>Este e um email automatico, por favor responda para suporte@aisol.cloud.</p>
+    </div>
+  </div>
+</body>
+</html>
+    `,
+    text: `
+${COMPANY_NAME} - Aviso Importante sobre seu Projeto EL
+
+Prezado cliente,
+
+Infelizmente, nao foi possivel processar o relatorio de eletroluminescencia do seu projeto com os arquivos fornecidos.
+
+Projeto: ${data.projectName}
+ID: ${data.projectId}
+Status: Nao Processado
+Data: ${new Date().toLocaleDateString('pt-BR')}
+
+Isso pode ter ocorrido por diversos motivos, como:
+- Qualidade insuficiente das imagens de eletroluminescencia
+- Problemas na deteccao de defeitos nas celulas
+- Formato de arquivo incompativel
+- Imagens com resolucao muito baixa
+
+ENTRE EM CONTATO CONOSCO:
+- Email: suporte@aisol.cloud
+- WhatsApp: +55 (67) 99699-6672
+- Horario: Segunda a Sexta, 9h as 18h
+
+Pedimos desculpas pelo inconveniente e estamos a disposicao para auxiliar.
+
+---
+${COMPANY_NAME}
+    `,
+  }),
 };
 
 /**

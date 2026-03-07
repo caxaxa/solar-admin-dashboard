@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Canvas, FabricImage, Polygon, Line, Circle, Point as FabricPoint } from 'fabric';
 import { Loader2, Save, Trash2, MousePointer, Pentagon, Minus } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 
 interface Point {
   x: number;
@@ -30,7 +30,7 @@ interface CropAnnotationToolProps {
 type ToolMode = 'select' | 'polygon' | 'line';
 
 export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationToolProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const canvasInstanceRef = useRef<Canvas | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -67,7 +67,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
     async function fetchData() {
       try {
         console.log('Fetching crop annotations...');
-        const response = await fetch(
+        const response = await apiFetch(
           buildApiUrl(`/projects/${orgId}/${projectId}/crop-annotations?env=${env}`)
         );
 
@@ -94,15 +94,22 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
 
   // Second effect: Initialize canvas after loading is complete
   useEffect(() => {
-    if (loading || !canvasRef.current) {
+    if (loading || !canvasWrapperRef.current) {
       return;
     }
 
+    const container = canvasWrapperRef.current;
+
+    // Create canvas element imperatively so React never manages it.
+    // Fabric.js wraps the canvas in its own container div — if React tries
+    // to reconcile those nodes, it crashes with "insertBefore" errors.
     console.log('Initializing Fabric canvas...');
+    const canvasEl = document.createElement('canvas');
+    container.appendChild(canvasEl);
     let canvas: Canvas;
 
     try {
-      canvas = new Canvas(canvasRef.current, {
+      canvas = new Canvas(canvasEl, {
         width: window.innerWidth - 400,
         height: window.innerHeight - 200,
         backgroundColor: '#1f2937',
@@ -186,6 +193,10 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
         console.log('Disposing canvas...');
         canvasInstanceRef.current.dispose();
         canvasInstanceRef.current = null;
+      }
+      // Remove all imperatively created DOM nodes from the wrapper
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
       }
     };
     // This effect intentionally depends only on the loading flag because it
@@ -552,7 +563,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
         is2H,
       };
 
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/projects/${orgId}/${projectId}/crop-annotations?env=${env}`),
         {
           method: 'PUT',
@@ -597,7 +608,7 @@ export function CropAnnotationTool({ orgId, projectId, env }: CropAnnotationTool
     <div className="flex h-screen bg-gray-900">
       {/* Canvas area */}
       <div className="flex-1 relative">
-        <canvas ref={canvasRef} className="block" />
+        <div ref={canvasWrapperRef} className="block w-full h-full" />
 
         {/* Tool mode indicator */}
         <div className="absolute top-4 left-4 bg-gray-800 px-4 py-2 rounded-lg text-white">

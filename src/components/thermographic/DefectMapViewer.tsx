@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, ZoomIn, ZoomOut, RotateCcw, X, MapPin, Thermometer } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 import { useIsomorphicLayoutEffect } from '@/lib/useIsomorphicLayoutEffect';
 
 // Defect class colors (matching report builder)
@@ -81,7 +81,7 @@ export function DefectMapViewer({ projectId }: DefectMapViewerProps) {
         setLoading(true);
         setError(null);
 
-        const response = await fetch(buildApiUrl(`/projects/${projectId}/defect-map`));
+        const response = await apiFetch(buildApiUrl(`/projects/${projectId}/defect-map`));
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));

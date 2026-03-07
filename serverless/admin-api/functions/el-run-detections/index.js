@@ -23,7 +23,7 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-const LABELS = ['crack', 'micro-crack'];
+const LABELS = ['defects'];
 
 function generateMockBoxes(imageWidth, imageHeight) {
   const count = randomInt(1, 5);

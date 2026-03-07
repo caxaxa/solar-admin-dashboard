@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { X, Upload, Loader2, CheckCircle, AlertCircle, File } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 
 interface ProjectUploadModalProps {
   orgId: string;
@@ -80,7 +80,7 @@ export function ProjectUploadModal({
 
     try {
       // Get presigned URL
-      const presignResponse = await fetch(
+      const presignResponse = await apiFetch(
         buildApiUrl(`/projects/${orgId}/${projectId}/presign-upload?env=${environment}`),
         {
           method: 'POST',
@@ -127,7 +127,7 @@ export function ProjectUploadModal({
       });
 
       // Mark file as complete in backend
-      const completeResponse = await fetch(
+      const completeResponse = await apiFetch(
         buildApiUrl(`/projects/${orgId}/${projectId}/files/${file_id}/complete?env=${environment}`),
         { method: 'POST' }
       );
@@ -201,7 +201,7 @@ export function ProjectUploadModal({
     // Finalize the upload
     setFinalizing(true);
     try {
-      const finalizeResponse = await fetch(
+      const finalizeResponse = await apiFetch(
         buildApiUrl(`/projects/${orgId}/${projectId}/finalize-upload?env=${environment}`),
         { method: 'POST' }
       );

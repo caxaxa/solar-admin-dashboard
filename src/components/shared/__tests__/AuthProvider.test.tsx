@@ -2,7 +2,7 @@
  * Tests for AuthProvider — auth check, admin guard, idle timeout.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, waitFor } from '@testing-library/react'
 import { useRouter, usePathname } from 'next/navigation'
 
 // Override the stub defaults for our tests
@@ -14,11 +14,16 @@ vi.mocked(useRouter).mockReturnValue({
   forward: vi.fn(),
   refresh: vi.fn(),
   prefetch: vi.fn(),
-} as any)
+} as ReturnType<typeof useRouter>)
 vi.mocked(usePathname).mockReturnValue('/dashboard')
 
 vi.mock('lucide-react', () => ({
   Loader2: (props: Record<string, unknown>) => <span data-testid="loader" {...props}>Loading</span>,
+}))
+
+vi.mock('@/lib/auth', () => ({
+  isTokenExpired: vi.fn().mockReturnValue(false),
+  refreshAccessToken: vi.fn().mockResolvedValue('new-token'),
 }))
 
 import { AuthProvider } from '../AuthProvider'
@@ -52,7 +57,7 @@ describe('AuthProvider', () => {
       forward: vi.fn(),
       refresh: vi.fn(),
       prefetch: vi.fn(),
-    } as any)
+    } as ReturnType<typeof useRouter>)
     localStorageMock.getItem.mockReturnValue(null)
   })
 
@@ -82,7 +87,7 @@ describe('AuthProvider', () => {
     expect(screen.queryByText('Secret')).not.toBeInTheDocument()
   })
 
-  it('redirects non-admin user to /login and clears storage', () => {
+  it('redirects non-admin user to /login and clears storage', async () => {
     localStorageMock.getItem.mockImplementation((key: string) => {
       if (key === 'accessToken') return 'tok'
       if (key === 'user') return nonAdmin
@@ -91,11 +96,13 @@ describe('AuthProvider', () => {
 
     render(<AuthProvider><div>Secret</div></AuthProvider>)
 
-    expect(localStorageMock.clear).toHaveBeenCalled()
-    expect(mockPush).toHaveBeenCalledWith('/login')
+    await waitFor(() => {
+      expect(localStorageMock.clear).toHaveBeenCalled()
+      expect(mockPush).toHaveBeenCalledWith('/login')
+    })
   })
 
-  it('renders children for valid admin', () => {
+  it('renders children for valid admin', async () => {
     localStorageMock.getItem.mockImplementation((key: string) => {
       if (key === 'accessToken') return 'tok'
       if (key === 'user') return validAdmin
@@ -104,8 +111,10 @@ describe('AuthProvider', () => {
 
     render(<AuthProvider><div>Admin Content</div></AuthProvider>)
 
+    await waitFor(() => {
+      expect(screen.getByText('Admin Content')).toBeInTheDocument()
+    })
     expect(mockPush).not.toHaveBeenCalled()
-    expect(screen.getByText('Admin Content')).toBeInTheDocument()
   })
 
   it('renders children on /login path without auth check', () => {
@@ -117,9 +126,10 @@ describe('AuthProvider', () => {
     expect(mockPush).not.toHaveBeenCalled()
   })
 
-  it('returns null when unauthenticated on protected route', () => {
-    const { container } = render(<AuthProvider><div>Secret</div></AuthProvider>)
-    expect(container.innerHTML).toBe('')
+  it('shows loading state while redirecting unauthenticated protected route', () => {
+    render(<AuthProvider><div>Secret</div></AuthProvider>)
+    expect(screen.queryByText('Secret')).not.toBeInTheDocument()
+    expect(screen.getByTestId('loader')).toBeInTheDocument()
   })
 
   describe('idle timeout', () => {
@@ -136,8 +146,11 @@ describe('AuthProvider', () => {
       vi.useRealTimers()
     })
 
-    it('logs out after 1 hour of idle', () => {
+    it('logs out after 1 hour of idle', async () => {
       render(<AuthProvider><div>Content</div></AuthProvider>)
+
+      // Flush the async checkAuth microtask so the component renders children
+      await act(async () => { await Promise.resolve() })
       expect(screen.getByText('Content')).toBeInTheDocument()
 
       act(() => { vi.advanceTimersByTime(3_600_000) })
@@ -146,8 +159,11 @@ describe('AuthProvider', () => {
       expect(mockPush).toHaveBeenCalledWith('/login')
     })
 
-    it('resets idle timer on mousemove', () => {
+    it('resets idle timer on mousemove', async () => {
       render(<AuthProvider><div>Content</div></AuthProvider>)
+
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByText('Content')).toBeInTheDocument()
 
       act(() => { vi.advanceTimersByTime(3_000_000) })
       act(() => { window.dispatchEvent(new Event('mousemove')) })

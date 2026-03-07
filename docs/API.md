@@ -4,7 +4,7 @@ Complete reference for all REST API endpoints provided by the serverless backend
 
 **Base URL**: `https://[api-id].execute-api.us-east-2.amazonaws.com`
 
-**Current Deployment**: `https://f15424dikc.execute-api.us-east-2.amazonaws.com`
+**Current Deployment**: `https://f6n5f8j2o0.execute-api.us-east-2.amazonaws.com`
 
 ## Table of Contents
 
@@ -679,7 +679,7 @@ Import the following collection (save as `solar-admin-api.postman_collection.jso
   "variable": [
     {
       "key": "baseUrl",
-      "value": "https://f15424dikc.execute-api.us-east-2.amazonaws.com"
+      "value": "https://f6n5f8j2o0.execute-api.us-east-2.amazonaws.com"
     }
   ],
   "item": [

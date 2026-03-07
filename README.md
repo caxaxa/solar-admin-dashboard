@@ -1,26 +1,24 @@
 # Solar Admin Dashboard
 
-Next.js-based admin dashboard for managing solar panel inspection projects, including crop annotation, project status tracking, and inference job monitoring.
+Next.js-based admin dashboard for managing the Solar O&M Platform. Provides internal tooling for both **thermographic** and **EL (electroluminescence)** inspection workflows, including annotation, AI inference management, and project pipeline tracking.
 
 ## Features
 
-### Crop Annotation Tool
-Interactive canvas-based tool for annotating orthomosaic images before running inference. Allows engineers to:
-- Draw polygon regions to define the area of interest (crop region)
-- Draw rotation lines to specify alignment angles
-- Configure metadata about the solar installation
-- Save annotations that automatically feed into the inference pipeline
+### Thermographic Workflow
+- **Crop Annotation Tool** — interactive canvas for defining crop regions and rotation on orthomosaic images before inference
+- **Project Pipeline** — monitor thermographic project stages (upload → ODM → inference → report)
+- **Inference Triggering** — launch Detectron2 batch jobs, review detection results
 
-### Project Management
-- View all projects across organizations
-- Monitor project status and pipeline stages
-- Trigger inference jobs
-- Review detection results
+### EL (Electroluminescence) Workflow
+- **EL Projects List** (`/el/projects`) — view all EL projects across organizations
+- **EL Pipeline View** (`/el/project`) — 5-stage pipeline: upload → AI detection → human review → report → release
+- **EL Annotation Tool** (`/el/annotate/defects`) — canvas-based defect review and correction interface
+- **EL Model Management** (`/el/model`) — AI model status (currently using mock detection; trained model pending)
 
-### Batch Job Monitoring
-- Track AWS Batch inference jobs in real-time
-- View job logs and status
-- Retry failed jobs
+### Shared Features
+- View all projects across organizations (thermographic + EL)
+- Track AWS Batch jobs in real-time
+- Runtime dev/prod environment toggle via `NEXT_PUBLIC_ENV`
 
 ## Crop Annotation Feature
 
@@ -203,10 +201,21 @@ npm run start
 
 ### Key Routes
 
+**Thermographic:**
 - `/projects` - Project list view
-- `/projects/[orgId]/[projectId]` - Project details and status
-- `/projects/[orgId]/[projectId]/crop` - Crop annotation interface
-- `/api/projects/[orgId]/[projectId]/run-inference` - POST endpoint to trigger inference jobs
+- `/project` - Project details and pipeline status
+- `/annotate/crop` - Crop annotation interface
+- `/annotate/defects` - Defect review
+- `/model` - Thermographic AI model management
+
+**EL (Electroluminescence):**
+- `/el/projects` - EL projects list
+- `/el/project` - EL project pipeline view (5-stage)
+- `/el/annotate/defects` - EL defect annotation tool (canvas-based)
+- `/el/model` - EL AI model management
+
+**API:**
+- `/api/projects/[orgId]/[projectId]/run-inference` - Trigger thermographic inference job
 
 ### API Endpoints
 
@@ -236,17 +245,52 @@ Triggers AWS Batch inference job with crop annotation support.
 
 ## Deployment
 
-The admin dashboard is typically deployed separately from the main solar-web-app:
+The admin dashboard is deployed separately from the main solar-web-app. It uses a **single deployment** that handles both dev and prod data via the `NEXT_PUBLIC_ENV` runtime toggle.
+
+### Static Export (CloudFront + S3)
+
+The Next.js config uses `output: 'export'` to generate static files:
 
 ```bash
-# Deploy to development
 npm run build
-# Deploy built artifacts to hosting service (Vercel, AWS Amplify, etc.)
-
-# Or use Docker
-docker build -t solar-admin-dashboard .
-docker run -p 3000:3000 solar-admin-dashboard
+# Output is in the `out/` directory
+# Deploy to S3 behind CloudFront
+aws s3 sync out/ s3://<frontend-bucket>/ --delete
+aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths "/*"
 ```
+
+**Production URL:** `https://admin.solar.aisol.cloud` (CloudFront: `d335vf81wvlg21.cloudfront.net`)
+
+### PM2 (Server-Side)
+
+The `ecosystem.config.js` configures PM2 to run Next.js on port 3001:
+
+```bash
+# Start with dev environment (default)
+pm2 start ecosystem.config.js
+
+# Start with prod environment
+pm2 start ecosystem.config.js --env production
+```
+
+The `NEXT_PUBLIC_ENV` variable (`dev` or `prod`) controls which S3 buckets, DynamoDB tables, and Batch queues the dashboard interacts with. Both environments' resource names are available to the serverless API simultaneously (see `template.yaml`).
+
+### Serverless API
+
+The admin API (Lambda functions) is deployed via AWS SAM:
+
+```bash
+cd serverless/admin-api
+sam build
+sam deploy --guided   # first time
+sam deploy            # subsequent
+```
+
+**API URL:** `https://f6n5f8j2o0.execute-api.us-east-2.amazonaws.com`
+
+### CI/CD
+
+Currently, the GitHub Actions CI workflow (`ci.yml`) runs linting and tests on push/PR. There is **no automated deployment** — deployment is done manually.
 
 ## Troubleshooting
 

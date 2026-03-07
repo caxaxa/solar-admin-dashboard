@@ -114,5 +114,41 @@ export function parseJwt(token: string): Record<string, unknown> | null {
 export function isTokenExpired(token: string): boolean {
   const payload = parseJwt(token);
   if (!payload || typeof payload.exp !== 'number') return true;
-  return Date.now() >= payload.exp * 1000;
+  // Treat as expired 60s before actual expiry to avoid edge-case failures
+  return Date.now() >= (payload.exp - 60) * 1000;
+}
+
+/**
+ * Use the stored refresh token to get a new access token from Cognito.
+ * Updates localStorage on success. Returns the new access token or null.
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refreshToken') : null;
+  if (!refreshToken) return null;
+
+  try {
+    const command = new InitiateAuthCommand({
+      AuthFlow: 'REFRESH_TOKEN_AUTH',
+      ClientId: awsConfig.cognito.clientId,
+      AuthParameters: {
+        REFRESH_TOKEN: refreshToken,
+      },
+    });
+
+    const response = await cognitoClient.send(command);
+    const result = response.AuthenticationResult;
+
+    if (result?.AccessToken) {
+      localStorage.setItem('accessToken', result.AccessToken);
+      if (result.IdToken) {
+        localStorage.setItem('idToken', result.IdToken);
+      }
+      return result.AccessToken;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('Token refresh failed:', error);
+    return null;
+  }
 }

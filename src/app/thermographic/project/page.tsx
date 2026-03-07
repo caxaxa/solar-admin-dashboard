@@ -1,12 +1,13 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Sidebar } from '@/components/shared/Sidebar';
 import { Header } from '@/components/shared/Header';
 import { PipelineView } from '@/components/thermographic/PipelineView';
 import Link from 'next/link';
 
-export default function ThermographicProjectPage() {
+function ThermographicProjectContent() {
   const searchParams = useSearchParams();
   const orgId = searchParams.get('orgId');
   const projectId = searchParams.get('projectId');
@@ -52,5 +53,13 @@ export default function ThermographicProjectPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function ThermographicProjectPage() {
+  return (
+    <Suspense>
+      <ThermographicProjectContent />
+    </Suspense>
   );
 }

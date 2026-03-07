@@ -10,6 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "aws-sdk": "^2.1693.0",
     "ulid": "^2.4.0"
   },

@@ -56,6 +56,26 @@ function getELJobResources(env) {
   };
 }
 
+function getIVBucketConfig(env) {
+  const normalized = normalizeEnv(env);
+  return {
+    env: normalized,
+    uploadsBucket:
+      process.env[`IV_UPLOADS_BUCKET_${normalized.toUpperCase()}`] || '',
+    reportsBucket:
+      process.env[`IV_REPORTS_BUCKET_${normalized.toUpperCase()}`] || '',
+  };
+}
+
+function getIVJobResources(env) {
+  const normalized = normalizeEnv(env);
+  return {
+    jobQueue: process.env[`JOB_QUEUE_${normalized.toUpperCase()}`] || '',
+    reportJobDefinition:
+      process.env[`IV_REPORT_JOB_DEF_${normalized.toUpperCase()}`] || '',
+  };
+}
+
 module.exports = {
   normalizeEnv,
   getBucketConfig,
@@ -63,4 +83,6 @@ module.exports = {
   getJobResources,
   getELBucketConfig,
   getELJobResources,
+  getIVBucketConfig,
+  getIVJobResources,
 };

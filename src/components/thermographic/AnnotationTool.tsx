@@ -23,7 +23,7 @@ import {
   Copy,
   Clipboard,
 } from 'lucide-react';
-import { buildApiUrl } from '@/lib/api-client';
+import { buildApiUrl, apiFetch } from '@/lib/api-client';
 
 interface AnnotationToolProps {
   orgId: string;
@@ -41,9 +41,9 @@ interface BoundingBox {
 
 const LABELS = [
   { id: 'default_panel', name: 'Default Panel', color: '#22c55e' },
-  { id: 'hotspots', name: 'Células Quentes', color: '#ef4444' },
-  { id: 'faultydiodes', name: 'Diodos Queimados', color: '#f97316' },
-  { id: 'offlinepanels', name: 'Painéis Desligados', color: '#eab308' },
+  { id: 'hotspots', name: 'Hotspots', color: '#ef4444' },
+  { id: 'faultydiodes', name: 'Faulty Diodes', color: '#f97316' },
+  { id: 'offlinepanels', name: 'Offline Panels', color: '#eab308' },
 ];
 
 // Extend Rect to include custom label property
@@ -65,7 +65,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
   console.log('AnnotationTool component loaded with:', { orgId, projectId, env });
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const fabricCanvasRef = useRef<Canvas | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -123,13 +123,21 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
 
   // Initialize Fabric.js canvas
   useEffect(() => {
-    if (!mounted || !canvasRef.current || typeof window === 'undefined') {
-      console.log('Canvas initialization check:', { mounted, hasCanvasRef: !!canvasRef.current, hasWindow: typeof window !== 'undefined' });
+    if (!mounted || !canvasWrapperRef.current || typeof window === 'undefined') {
+      console.log('Canvas initialization check:', { mounted, hasCanvasWrapper: !!canvasWrapperRef.current, hasWindow: typeof window !== 'undefined' });
       return;
     }
 
+    const container = canvasWrapperRef.current;
+
+    // Create canvas element imperatively so React never manages it.
+    // Fabric.js wraps the canvas in its own container div — if React tries
+    // to reconcile those nodes, it crashes with "insertBefore" errors.
     console.log('Initializing Fabric canvas...');
-    const canvas = new Canvas(canvasRef.current, {
+    const canvasEl = document.createElement('canvas');
+    container.appendChild(canvasEl);
+
+    const canvas = new Canvas(canvasEl, {
       width: window.innerWidth,
       height: window.innerHeight - 120,
       backgroundColor: '#1f2937',
@@ -154,6 +162,10 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
     return () => {
       window.removeEventListener('resize', handleResize);
       canvas.dispose();
+      // Remove all imperatively created DOM nodes from the wrapper
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
     };
   }, [mounted]);
 
@@ -171,7 +183,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
         const apiUrl = buildApiUrl(`/projects/${orgId}/${projectId}/annotations?env=${env}`);
         console.log('Fetching annotations from:', apiUrl);
 
-        const response = await fetch(apiUrl);
+        const response = await apiFetch(apiUrl);
         console.log('Response status:', response.status);
 
         if (!response.ok) throw new Error('Failed to load data');
@@ -462,7 +474,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
       });
 
       // Save to S3
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/projects/${orgId}/${projectId}/annotations?env=${env}`),
         {
           method: 'PUT',
@@ -960,7 +972,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
       }
 
       // Call alignment API
-      const response = await fetch(
+      const response = await apiFetch(
         buildApiUrl(`/projects/${orgId}/${projectId}/align-panels?env=${env}`),
         {
           method: 'POST',
@@ -1232,7 +1244,7 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
               <button
                 onClick={handleAlignPanels}
                 disabled={aligning}
-                className="flex items-center gap-2 w-full px-2 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 disabled:opacity-50"
+                className="flex items-center gap-2 w-full px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50"
               >
                 {aligning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Grid3X3 className="h-3 w-3" />}
                 Align Panels
@@ -1291,18 +1303,19 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
         </div>
       </div>
 
-      {/* Loading overlay */}
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-20">
-          <div className="text-center">
-            <Loader2 className="h-12 w-12 animate-spin text-blue-500 mx-auto mb-4" />
-            <p className="text-gray-300">Loading image and annotations...</p>
-          </div>
+      {/* Loading overlay — always rendered, visibility toggled via CSS so
+          React never inserts/removes DOM siblings next to the Fabric canvas wrapper */}
+      <div className={`absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-20 transition-opacity duration-150 ${
+        loading ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      }`}>
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 animate-spin text-blue-500 mx-auto mb-4" />
+          <p className="text-gray-300">Loading image and annotations...</p>
         </div>
-      )}
+      </div>
 
-      {/* Canvas */}
-      <canvas ref={canvasRef} className="w-full h-full" />
+      {/* Canvas — wrapper div managed imperatively by Fabric.js */}
+      <div ref={canvasWrapperRef} className="w-full h-full" />
     </div>
   );
 }

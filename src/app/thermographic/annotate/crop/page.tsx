@@ -20,7 +20,7 @@ const CropAnnotationTool = dynamic(
   }
 );
 
-export default function CropAnnotationPage() {
+function CropAnnotationContent() {
   const searchParams = useSearchParams();
   const orgId = searchParams.get('orgId');
   const projectId = searchParams.get('projectId');
@@ -66,16 +66,22 @@ export default function CropAnnotationPage() {
       </div>
 
       {/* Annotation tool */}
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center h-screen bg-gray-900">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-            <span className="ml-2 text-white">Loading...</span>
-          </div>
-        }
-      >
-        <CropAnnotationTool orgId={orgId} projectId={projectId} env={env} />
-      </Suspense>
+      <CropAnnotationTool orgId={orgId} projectId={projectId} env={env} />
     </div>
+  );
+}
+
+export default function CropAnnotationPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-screen bg-gray-900">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+          <span className="ml-2 text-white">Loading...</span>
+        </div>
+      }
+    >
+      <CropAnnotationContent />
+    </Suspense>
   );
 }
