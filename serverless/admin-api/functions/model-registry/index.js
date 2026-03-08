@@ -187,6 +187,52 @@ async function listModels() {
   });
 }
 
+async function backfillTrainedIndex() {
+  const index = { trained: {} };
+  try {
+    const resp = await ddb.scan({ TableName: MODEL_REGISTRY_TABLE, Limit: 200 }).promise();
+    const trainedModels = (resp.Items || []).filter(
+      (item) =>
+        item.model_version &&
+        item.model_version !== PROD_POINTER_PK &&
+        item.manifest_uri &&
+        ['submitted', 'production', 'archived'].includes(item.status)
+    );
+
+    for (const model of trainedModels) {
+      const parsed = parseS3Uri(model.manifest_uri);
+      if (!parsed) continue;
+      try {
+        const mResp = await s3.getObject({ Bucket: parsed.bucket, Key: parsed.key }).promise();
+        const manifest = JSON.parse(mResp.Body.toString());
+        for (const a of manifest.archives || []) {
+          const archiveKey = `${a.user_id || 'na'}|${a.project_id || a.source_key || ''}`;
+          index.trained[archiveKey] = {
+            model_version: model.model_version,
+            trained_at: model.created_at
+              ? new Date(model.created_at * 1000).toISOString()
+              : new Date().toISOString(),
+          };
+        }
+      } catch (e) {
+        console.error('backfill: failed to read manifest for', model.model_version, e.message);
+      }
+    }
+
+    await s3
+      .putObject({
+        Bucket: TRAINING_DATA_BUCKET,
+        Key: TRAINED_INDEX_KEY,
+        Body: JSON.stringify(index, null, 2),
+        ContentType: 'application/json',
+      })
+      .promise();
+  } catch (e) {
+    console.error('backfillTrainedIndex error', e);
+  }
+  return index;
+}
+
 async function getTrainedIndex() {
   try {
     const resp = await s3
@@ -195,7 +241,8 @@ async function getTrainedIndex() {
     return JSON.parse(resp.Body.toString());
   } catch (e) {
     if (e.code === 'NoSuchKey' || e.statusCode === 404) {
-      return { trained: {} };
+      // Fix #7: Lazy backfill from existing model records
+      return await backfillTrainedIndex();
     }
     console.error('getTrainedIndex error', e);
     return { trained: {} };
@@ -219,12 +266,11 @@ async function updateTrainedIndex(manifestUri, modelVersion) {
 
     for (const a of archives) {
       const archiveKey = `${a.user_id || 'na'}|${a.project_id || a.source_key || ''}`;
-      if (!index.trained[archiveKey]) {
-        index.trained[archiveKey] = {
-          model_version: modelVersion,
-          trained_at: now,
-        };
-      }
+      // Fix #8: Always update to latest training run
+      index.trained[archiveKey] = {
+        model_version: modelVersion,
+        trained_at: now,
+      };
     }
 
     await s3
@@ -487,6 +533,21 @@ async function launchRetrainJob(modelVersion, body) {
     }
   }
 
+  // Fix #1: Validate base weights exist before consuming GPU
+  if (baseWeightsUri) {
+    const parsed = parseS3Uri(baseWeightsUri);
+    if (parsed) {
+      try {
+        await s3.headObject({ Bucket: parsed.bucket, Key: parsed.key }).promise();
+      } catch (e) {
+        return ok(400, {
+          error: 'Base weights not found. Ensure the base model has model_final.pth.',
+          base_weights_uri: baseWeightsUri,
+        });
+      }
+    }
+  }
+
   const jobName = truncateJobName(`retrain-${modelVersion}`);
 
   const command = [
@@ -584,6 +645,8 @@ function parseS3Uri(uri) {
   return { bucket: without.slice(0, firstSlash), key: without.slice(firstSlash + 1) };
 }
 
+const SKIP_PREFIXES = ['datasets/', 'model-registry/', 'detectron2-solar-models/', 'training-data/manifests/'];
+
 async function listAllMetadataKeys() {
   let continuationToken;
   const keys = [];
@@ -597,9 +660,10 @@ async function listAllMetadataKeys() {
       .promise();
 
     for (const obj of resp.Contents || []) {
-      if (obj.Key && obj.Key.endsWith('metadata.json')) {
-        keys.push(obj.Key);
-      }
+      if (!obj.Key || !obj.Key.endsWith('metadata.json')) continue;
+      // Fix #5: Skip known non-archive prefixes
+      if (SKIP_PREFIXES.some((p) => obj.Key.startsWith(p))) continue;
+      keys.push(obj.Key);
     }
 
     continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
@@ -644,18 +708,11 @@ async function buildCocoArchive(body) {
           '--dataset-upload-uri',
           targetUri,
           '--build-only',
-          '--checkpoint-epochs',
-          String(DEFAULT_CHECKPOINT_EPOCHS),
-          '--eval-epochs',
-          String(DEFAULT_EVAL_EPOCHS),
-          '--dataloader-workers',
-          '2',
         ],
         environment: [
           { name: 'MANIFEST_URI', value: manifestUri },
           { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
           { name: 'DATASET_UPLOAD_URI', value: targetUri },
-          // Ensure training entrypoint does not fall back to a baked-in dataset/archive
           { name: 'DATASET_ARCHIVE_URI', value: '' },
           { name: 'BASE_WEIGHTS_URI', value: '' },
         ],
@@ -694,12 +751,6 @@ async function prepareRetrain(body) {
           '--dataset-upload-uri',
           datasetUploadUri,
           '--build-only',
-          '--checkpoint-epochs',
-          String(DEFAULT_CHECKPOINT_EPOCHS),
-          '--eval-epochs',
-          String(DEFAULT_EVAL_EPOCHS),
-          '--dataloader-workers',
-          '2',
         ],
         environment: [
           { name: 'MANIFEST_URI', value: manifestUri },
@@ -779,6 +830,14 @@ async function listFilesInPrefix(prefix, metadataKey) {
 async function promoteModel(modelVersion, body) {
   const now = Math.floor(Date.now() / 1000);
 
+  // Fix #3: Validate model exists before promoting
+  const getResp = await ddb
+    .get({ TableName: MODEL_REGISTRY_TABLE, Key: { model_version: modelVersion } })
+    .promise();
+  if (!getResp.Item) {
+    return ok(404, { error: 'Model not found in registry' });
+  }
+
   // Get current production model to clear its is_production flag
   const currentProd = await getProdPointer();
 
@@ -842,6 +901,14 @@ async function promoteModel(modelVersion, body) {
 async function deleteModel(modelVersion) {
   if (!modelVersion || modelVersion === PROD_POINTER_PK) {
     return ok(400, { error: 'Invalid model version' });
+  }
+
+  // Fix #2: Check if this is the current production model
+  const getResp = await ddb
+    .get({ TableName: MODEL_REGISTRY_TABLE, Key: { model_version: modelVersion } })
+    .promise();
+  if (getResp.Item?.is_production) {
+    return ok(400, { error: 'Cannot delete the current production model. Promote a different model first.' });
   }
 
   await ddb

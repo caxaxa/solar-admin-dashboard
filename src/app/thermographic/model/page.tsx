@@ -49,6 +49,8 @@ export default function ModelPage() {
   const [launchBusy, setLaunchBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [pollCount, setPollCount] = useState(0);
+  const MAX_POLL_ATTEMPTS = 120;
 
   const getErrorMessage = (err: unknown, fallback: string) =>
     err instanceof Error ? err.message : fallback;
@@ -156,15 +158,23 @@ export default function ModelPage() {
   useEffect(() => {
     let cancelled = false;
     let timeoutId: number | undefined;
+    let attempts = 0;
 
     if (!datasetUri) {
       setDatasetReady(false);
+      setPollCount(0);
       return () => {};
     }
 
     const poll = async () => {
+      attempts++;
+      setPollCount(attempts);
       const ready = await checkDatasetReady(datasetUri);
       if (!cancelled && !ready) {
+        if (attempts >= MAX_POLL_ATTEMPTS) {
+          setError('COCO build timed out after 10 minutes. Check Batch job logs for errors, then retry.');
+          return;
+        }
         timeoutId = window.setTimeout(poll, 5000);
       }
     };
