@@ -1,9 +1,32 @@
-const AWS = require('aws-sdk');
-const { ulid } = require('ulid');
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const {
+  DynamoDBDocumentClient,
+  GetCommand,
+  PutCommand,
+  ScanCommand,
+  DeleteCommand,
+  UpdateCommand,
+} = require('@aws-sdk/lib-dynamodb');
+const {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+} = require('@aws-sdk/client-s3');
+const { BatchClient, SubmitJobCommand } = require('@aws-sdk/client-batch');
 
-const ddb = new AWS.DynamoDB.DocumentClient();
-const s3 = new AWS.S3();
-const batch = new AWS.Batch();
+// ulid is not bundled in the runtime — use a simple timestamp+random fallback
+function ulid() {
+  const ts = Date.now().toString(36).toUpperCase();
+  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return ts + rand;
+}
+
+const ddbRaw = new DynamoDBClient({});
+const ddb = DynamoDBDocumentClient.from(ddbRaw);
+const s3 = new S3Client({});
+const batchClient = new BatchClient({});
 
 const ENV = process.env.ENVIRONMENT || 'dev';
 const TRAINING_DATA_BUCKET = process.env.TRAINING_DATA_BUCKET || 'solar-ai-training';
@@ -50,6 +73,15 @@ const ok = (statusCode, body) => ({
   headers: corsHeaders(),
   body: JSON.stringify(body),
 });
+
+// Helper: read S3 object body as string (v3 returns a stream)
+async function s3BodyToString(body) {
+  const chunks = [];
+  for await (const chunk of body) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString('utf-8');
+}
 
 exports.handler = async (event) => {
   _event = event;
@@ -140,15 +172,13 @@ async function checkDatasetReady(body) {
   }
 
   try {
-    await s3
-      .headObject({
-        Bucket: parsed.bucket,
-        Key: parsed.key,
-      })
-      .promise();
+    await s3.send(new HeadObjectCommand({
+      Bucket: parsed.bucket,
+      Key: parsed.key,
+    }));
     return ok(200, { dataset_uri: datasetUri, exists: true });
   } catch (e) {
-    if (e.code === 'NotFound' || e.statusCode === 404) {
+    if (e.name === 'NotFound' || e.$metadata?.httpStatusCode === 404) {
       return ok(200, { dataset_uri: datasetUri, exists: false });
     }
     console.error('checkDatasetReady error', e);
@@ -157,23 +187,19 @@ async function checkDatasetReady(body) {
 }
 
 async function getProdPointer() {
-  const resp = await ddb
-    .get({
-      TableName: MODEL_REGISTRY_TABLE,
-      Key: { model_version: PROD_POINTER_PK },
-    })
-    .promise();
+  const resp = await ddb.send(new GetCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Key: { model_version: PROD_POINTER_PK },
+  }));
   return resp.Item ? resp.Item.current_production : null;
 }
 
 async function listModels() {
   const pointer = await getProdPointer();
-  const resp = await ddb
-    .scan({
-      TableName: MODEL_REGISTRY_TABLE,
-      Limit: 200,
-    })
-    .promise();
+  const resp = await ddb.send(new ScanCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Limit: 200,
+  }));
 
   const items = (resp.Items || []).filter(
     (item) => item.model_version && item.model_version !== PROD_POINTER_PK
@@ -190,7 +216,7 @@ async function listModels() {
 async function backfillTrainedIndex() {
   const index = { trained: {} };
   try {
-    const resp = await ddb.scan({ TableName: MODEL_REGISTRY_TABLE, Limit: 200 }).promise();
+    const resp = await ddb.send(new ScanCommand({ TableName: MODEL_REGISTRY_TABLE, Limit: 200 }));
     const trainedModels = (resp.Items || []).filter(
       (item) =>
         item.model_version &&
@@ -203,8 +229,8 @@ async function backfillTrainedIndex() {
       const parsed = parseS3Uri(model.manifest_uri);
       if (!parsed) continue;
       try {
-        const mResp = await s3.getObject({ Bucket: parsed.bucket, Key: parsed.key }).promise();
-        const manifest = JSON.parse(mResp.Body.toString());
+        const mResp = await s3.send(new GetObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }));
+        const manifest = JSON.parse(await s3BodyToString(mResp.Body));
         for (const a of manifest.archives || []) {
           const archiveKey = `${a.user_id || 'na'}|${a.project_id || a.source_key || ''}`;
           index.trained[archiveKey] = {
@@ -219,14 +245,12 @@ async function backfillTrainedIndex() {
       }
     }
 
-    await s3
-      .putObject({
-        Bucket: TRAINING_DATA_BUCKET,
-        Key: TRAINED_INDEX_KEY,
-        Body: JSON.stringify(index, null, 2),
-        ContentType: 'application/json',
-      })
-      .promise();
+    await s3.send(new PutObjectCommand({
+      Bucket: TRAINING_DATA_BUCKET,
+      Key: TRAINED_INDEX_KEY,
+      Body: JSON.stringify(index, null, 2),
+      ContentType: 'application/json',
+    }));
   } catch (e) {
     console.error('backfillTrainedIndex error', e);
   }
@@ -235,13 +259,14 @@ async function backfillTrainedIndex() {
 
 async function getTrainedIndex() {
   try {
-    const resp = await s3
-      .getObject({ Bucket: TRAINING_DATA_BUCKET, Key: TRAINED_INDEX_KEY })
-      .promise();
-    return JSON.parse(resp.Body.toString());
+    const resp = await s3.send(new GetObjectCommand({
+      Bucket: TRAINING_DATA_BUCKET,
+      Key: TRAINED_INDEX_KEY,
+    }));
+    return JSON.parse(await s3BodyToString(resp.Body));
   } catch (e) {
-    if (e.code === 'NoSuchKey' || e.statusCode === 404) {
-      // Fix #7: Lazy backfill from existing model records
+    if (e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
+      // Lazy backfill from existing model records
       return await backfillTrainedIndex();
     }
     console.error('getTrainedIndex error', e);
@@ -258,29 +283,27 @@ async function updateTrainedIndex(manifestUri, modelVersion) {
   if (!parsed) return;
 
   try {
-    const resp = await s3
-      .getObject({ Bucket: parsed.bucket, Key: parsed.key })
-      .promise();
-    const manifest = JSON.parse(resp.Body.toString());
+    const resp = await s3.send(new GetObjectCommand({
+      Bucket: parsed.bucket,
+      Key: parsed.key,
+    }));
+    const manifest = JSON.parse(await s3BodyToString(resp.Body));
     const archives = manifest.archives || [];
 
     for (const a of archives) {
       const archiveKey = `${a.user_id || 'na'}|${a.project_id || a.source_key || ''}`;
-      // Fix #8: Always update to latest training run
       index.trained[archiveKey] = {
         model_version: modelVersion,
         trained_at: now,
       };
     }
 
-    await s3
-      .putObject({
-        Bucket: TRAINING_DATA_BUCKET,
-        Key: TRAINED_INDEX_KEY,
-        Body: JSON.stringify(index, null, 2),
-        ContentType: 'application/json',
-      })
-      .promise();
+    await s3.send(new PutObjectCommand({
+      Bucket: TRAINING_DATA_BUCKET,
+      Key: TRAINED_INDEX_KEY,
+      Body: JSON.stringify(index, null, 2),
+      ContentType: 'application/json',
+    }));
   } catch (e) {
     console.error('updateTrainedIndex error', e);
   }
@@ -401,14 +424,12 @@ async function createManifest() {
   const timestamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0];
   const key = `training-data/manifests/manifest-${timestamp}.json`;
 
-  await s3
-    .putObject({
-      Bucket: TRAINING_DATA_BUCKET,
-      Key: key,
-      Body: JSON.stringify(manifest, null, 2),
-      ContentType: 'application/json',
-    })
-    .promise();
+  await s3.send(new PutObjectCommand({
+    Bucket: TRAINING_DATA_BUCKET,
+    Key: key,
+    Body: JSON.stringify(manifest, null, 2),
+    ContentType: 'application/json',
+  }));
 
   manifest.manifest_uri = `s3://${TRAINING_DATA_BUCKET}/${key}`;
   manifest.manifest_key = key;
@@ -431,12 +452,10 @@ async function triggerRetrain(body) {
     status: 'queued',
   };
 
-  await ddb
-    .put({
-      TableName: MODEL_REGISTRY_TABLE,
-      Item: item,
-    })
-    .promise();
+  await ddb.send(new PutCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Item: item,
+  }));
 
   return ok(200, {
     model_version: modelVersion,
@@ -451,9 +470,10 @@ async function launchRetrainJob(modelVersion, body) {
   // Always fine-tune from the current production model unless explicitly overridden.
   const prodPointer = await getProdPointer();
 
-  const getResp = await ddb
-    .get({ TableName: MODEL_REGISTRY_TABLE, Key: { model_version: modelVersion } })
-    .promise();
+  const getResp = await ddb.send(new GetCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Key: { model_version: modelVersion },
+  }));
   const existing = getResp.Item;
 
   if (!existing) {
@@ -502,12 +522,10 @@ async function launchRetrainJob(modelVersion, body) {
       return ok(400, { error: 'dataset_archive_uri must be an s3:// URI' });
     }
     try {
-      await s3
-        .headObject({
-          Bucket: parsed.bucket,
-          Key: parsed.key,
-        })
-        .promise();
+      await s3.send(new HeadObjectCommand({
+        Bucket: parsed.bucket,
+        Key: parsed.key,
+      }));
     } catch (e) {
       return ok(400, {
         error:
@@ -521,24 +539,22 @@ async function launchRetrainJob(modelVersion, body) {
     const parsed = parseS3Uri(manifestUri);
     if (parsed) {
       try {
-        await s3
-          .headObject({
-            Bucket: parsed.bucket,
-            Key: parsed.key,
-          })
-          .promise();
+        await s3.send(new HeadObjectCommand({
+          Bucket: parsed.bucket,
+          Key: parsed.key,
+        }));
       } catch (e) {
         return ok(400, { error: 'Manifest not found', manifest_uri: manifestUri });
       }
     }
   }
 
-  // Fix #1: Validate base weights exist before consuming GPU
+  // Validate base weights exist before consuming GPU
   if (baseWeightsUri) {
     const parsed = parseS3Uri(baseWeightsUri);
     if (parsed) {
       try {
-        await s3.headObject({ Bucket: parsed.bucket, Key: parsed.key }).promise();
+        await s3.send(new HeadObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }));
       } catch (e) {
         return ok(400, {
           error: 'Base weights not found. Ensure the base model has model_final.pth.',
@@ -571,55 +587,49 @@ async function launchRetrainJob(modelVersion, body) {
     command.unshift('--manifest-uri', manifestUri, '--dataset-upload-uri', datasetUploadUri);
   }
 
-  const submit = await batch
-    .submitJob({
-      jobName,
-      jobQueue: RETRAIN_JOB_QUEUE,
-      jobDefinition: RETRAIN_JOB_DEFINITION,
-      containerOverrides: {
-        // The training image already sets the entrypoint to batch_train.py.
-        // Only pass arguments here.
-        command,
-        environment: [
-          { name: 'MANIFEST_URI', value: manifestUri },
-          { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
-          { name: 'DATASET_UPLOAD_URI', value: datasetUploadUri },
-          { name: 'RUN_NAME', value: modelVersion },
-          ...(baseWeightsUri ? [{ name: 'BASE_WEIGHTS_URI', value: baseWeightsUri }] : []),
-        ],
-      },
-    })
-    .promise();
+  const submit = await batchClient.send(new SubmitJobCommand({
+    jobName,
+    jobQueue: RETRAIN_JOB_QUEUE,
+    jobDefinition: RETRAIN_JOB_DEFINITION,
+    containerOverrides: {
+      command,
+      environment: [
+        { name: 'MANIFEST_URI', value: manifestUri },
+        { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
+        { name: 'DATASET_UPLOAD_URI', value: datasetUploadUri },
+        { name: 'RUN_NAME', value: modelVersion },
+        ...(baseWeightsUri ? [{ name: 'BASE_WEIGHTS_URI', value: baseWeightsUri }] : []),
+      ],
+    },
+  }));
 
   const now = Math.floor(Date.now() / 1000);
-  await ddb
-    .update({
-      TableName: MODEL_REGISTRY_TABLE,
-      Key: { model_version: modelVersion },
-      UpdateExpression:
-        'SET #status = :status, batch_job_id = :jobId, batch_job_name = :jobName, training_params = :tp, manifest_uri = :manifest, updated_at = :now',
-      ExpressionAttributeNames: {
-        '#status': 'status',
+  await ddb.send(new UpdateCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Key: { model_version: modelVersion },
+    UpdateExpression:
+      'SET #status = :status, batch_job_id = :jobId, batch_job_name = :jobName, training_params = :tp, manifest_uri = :manifest, updated_at = :now',
+    ExpressionAttributeNames: {
+      '#status': 'status',
+    },
+    ExpressionAttributeValues: {
+      ':status': 'submitted',
+      ':jobId': submit.jobId,
+      ':jobName': submit.jobName,
+      ':tp': {
+        ...(existing.training_params || {}),
+        epochs: epochs || existing.training_params?.epochs || null,
+        batch_size: batchSize,
+        max_iter: maxIter,
+        base_model_version: baseModelVersion || existing.base_model_version || null,
+        base_weights_uri: baseWeightsUri || existing.training_params?.base_weights_uri || null,
+        dataset_archive_uri:
+          datasetArchiveUri || existing.training_params?.dataset_archive_uri || datasetUploadUri,
       },
-      ExpressionAttributeValues: {
-        ':status': 'submitted',
-        ':jobId': submit.jobId,
-        ':jobName': submit.jobName,
-        ':tp': {
-          ...(existing.training_params || {}),
-          epochs: epochs || existing.training_params?.epochs || null,
-          batch_size: batchSize,
-          max_iter: maxIter,
-          base_model_version: baseModelVersion || existing.base_model_version || null,
-          base_weights_uri: baseWeightsUri || existing.training_params?.base_weights_uri || null,
-          dataset_archive_uri:
-            datasetArchiveUri || existing.training_params?.dataset_archive_uri || datasetUploadUri,
-        },
-        ':manifest': manifestUri,
-        ':now': now,
-      },
-    })
-    .promise();
+      ':manifest': manifestUri,
+      ':now': now,
+    },
+  }));
 
   // Mark all archives in this manifest as trained
   if (manifestUri) {
@@ -652,16 +662,13 @@ async function listAllMetadataKeys() {
   const keys = [];
 
   do {
-    const resp = await s3
-      .listObjectsV2({
-        Bucket: TRAINING_DATA_BUCKET,
-        ContinuationToken: continuationToken,
-      })
-      .promise();
+    const resp = await s3.send(new ListObjectsV2Command({
+      Bucket: TRAINING_DATA_BUCKET,
+      ContinuationToken: continuationToken,
+    }));
 
     for (const obj of resp.Contents || []) {
       if (!obj.Key || !obj.Key.endsWith('metadata.json')) continue;
-      // Fix #5: Skip known non-archive prefixes
       if (SKIP_PREFIXES.some((p) => obj.Key.startsWith(p))) continue;
       keys.push(obj.Key);
     }
@@ -696,29 +703,27 @@ async function buildCocoArchive(body) {
 
   const jobName = truncateJobName(`coco-build-${ulid().slice(0, 6)}`);
 
-  const submit = await batch
-    .submitJob({
-      jobName,
-      jobQueue: COCO_JOB_QUEUE,
-      jobDefinition: COCO_JOB_DEFINITION,
-      containerOverrides: {
-        command: [
-          '--manifest-uri',
-          manifestUri,
-          '--dataset-upload-uri',
-          targetUri,
-          '--build-only',
-        ],
-        environment: [
-          { name: 'MANIFEST_URI', value: manifestUri },
-          { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
-          { name: 'DATASET_UPLOAD_URI', value: targetUri },
-          { name: 'DATASET_ARCHIVE_URI', value: '' },
-          { name: 'BASE_WEIGHTS_URI', value: '' },
-        ],
-      },
-    })
-    .promise();
+  const submit = await batchClient.send(new SubmitJobCommand({
+    jobName,
+    jobQueue: COCO_JOB_QUEUE,
+    jobDefinition: COCO_JOB_DEFINITION,
+    containerOverrides: {
+      command: [
+        '--manifest-uri',
+        manifestUri,
+        '--dataset-upload-uri',
+        targetUri,
+        '--build-only',
+      ],
+      environment: [
+        { name: 'MANIFEST_URI', value: manifestUri },
+        { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
+        { name: 'DATASET_UPLOAD_URI', value: targetUri },
+        { name: 'DATASET_ARCHIVE_URI', value: '' },
+        { name: 'BASE_WEIGHTS_URI', value: '' },
+      ],
+    },
+  }));
 
   return ok(200, {
     message: 'COCO build job submitted',
@@ -739,30 +744,28 @@ async function prepareRetrain(body) {
   const datasetUploadUri =
     `${DATASET_UPLOAD_PREFIX}/detectron2-coco-${modelVersion}.tar.gz`;
 
-  const cocoJob = await batch
-    .submitJob({
-      jobName: truncateJobName(`coco-${modelVersion}`),
-      jobQueue: COCO_JOB_QUEUE,
-      jobDefinition: COCO_JOB_DEFINITION,
-      containerOverrides: {
-        command: [
-          '--manifest-uri',
-          manifestUri,
-          '--dataset-upload-uri',
-          datasetUploadUri,
-          '--build-only',
-        ],
-        environment: [
-          { name: 'MANIFEST_URI', value: manifestUri },
-          { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
-          { name: 'DATASET_UPLOAD_URI', value: datasetUploadUri },
-          { name: 'RUN_NAME', value: modelVersion },
-          { name: 'DATASET_ARCHIVE_URI', value: '' },
-          { name: 'BASE_WEIGHTS_URI', value: '' },
-        ],
-      },
-    })
-    .promise();
+  const cocoJob = await batchClient.send(new SubmitJobCommand({
+    jobName: truncateJobName(`coco-${modelVersion}`),
+    jobQueue: COCO_JOB_QUEUE,
+    jobDefinition: COCO_JOB_DEFINITION,
+    containerOverrides: {
+      command: [
+        '--manifest-uri',
+        manifestUri,
+        '--dataset-upload-uri',
+        datasetUploadUri,
+        '--build-only',
+      ],
+      environment: [
+        { name: 'MANIFEST_URI', value: manifestUri },
+        { name: 'OUTPUT_BUCKET', value: OUTPUT_BUCKET },
+        { name: 'DATASET_UPLOAD_URI', value: datasetUploadUri },
+        { name: 'RUN_NAME', value: modelVersion },
+        { name: 'DATASET_ARCHIVE_URI', value: '' },
+        { name: 'BASE_WEIGHTS_URI', value: '' },
+      ],
+    },
+  }));
 
   // 3) Create registry entry (status=queued, store manifest + dataset uri + params)
   const now = Math.floor(Date.now() / 1000);
@@ -786,12 +789,10 @@ async function prepareRetrain(body) {
     coco_job_name: cocoJob.jobName,
   };
 
-  await ddb
-    .put({
-      TableName: MODEL_REGISTRY_TABLE,
-      Item: item,
-    })
-    .promise();
+  await ddb.send(new PutCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Item: item,
+  }));
 
   return ok(200, {
     message: 'Prepare step submitted: manifest created, COCO build queued, registry entry created.',
@@ -808,13 +809,11 @@ async function listFilesInPrefix(prefix, metadataKey) {
   const files = [];
 
   do {
-    const resp = await s3
-      .listObjectsV2({
-        Bucket: TRAINING_DATA_BUCKET,
-        Prefix: prefix,
-        ContinuationToken: continuationToken,
-      })
-      .promise();
+    const resp = await s3.send(new ListObjectsV2Command({
+      Bucket: TRAINING_DATA_BUCKET,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
 
     for (const obj of resp.Contents || []) {
       if (!obj.Key || obj.Key === metadataKey) continue;
@@ -830,10 +829,11 @@ async function listFilesInPrefix(prefix, metadataKey) {
 async function promoteModel(modelVersion, body) {
   const now = Math.floor(Date.now() / 1000);
 
-  // Fix #3: Validate model exists before promoting
-  const getResp = await ddb
-    .get({ TableName: MODEL_REGISTRY_TABLE, Key: { model_version: modelVersion } })
-    .promise();
+  // Validate model exists before promoting
+  const getResp = await ddb.send(new GetCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Key: { model_version: modelVersion },
+  }));
   if (!getResp.Item) {
     return ok(404, { error: 'Model not found in registry' });
   }
@@ -842,54 +842,48 @@ async function promoteModel(modelVersion, body) {
   const currentProd = await getProdPointer();
 
   // Update pointer
-  await ddb
-    .put({
-      TableName: MODEL_REGISTRY_TABLE,
-      Item: {
-        model_version: PROD_POINTER_PK,
-        current_production: modelVersion,
-        updated_at: now,
-        promoted_by: body?.promoted_by || 'admin',
-      },
-    })
-    .promise();
+  await ddb.send(new PutCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Item: {
+      model_version: PROD_POINTER_PK,
+      current_production: modelVersion,
+      updated_at: now,
+      promoted_by: body?.promoted_by || 'admin',
+    },
+  }));
 
   // Clear is_production from previous model (if exists and different)
   if (currentProd && currentProd !== modelVersion) {
-    await ddb
-      .update({
-        TableName: MODEL_REGISTRY_TABLE,
-        Key: { model_version: currentProd },
-        UpdateExpression: 'SET is_production = :false, #status = :status',
-        ExpressionAttributeNames: {
-          '#status': 'status',
-        },
-        ExpressionAttributeValues: {
-          ':false': false,
-          ':status': 'archived',
-        },
-      })
-      .promise();
-  }
-
-  // Mark model as production
-  await ddb
-    .update({
+    await ddb.send(new UpdateCommand({
       TableName: MODEL_REGISTRY_TABLE,
-      Key: { model_version: modelVersion },
-      UpdateExpression:
-        'SET is_production = :true, #status = :status, promoted_at = :ts, promoted_by = :by',
+      Key: { model_version: currentProd },
+      UpdateExpression: 'SET is_production = :false, #status = :status',
       ExpressionAttributeNames: {
         '#status': 'status',
       },
       ExpressionAttributeValues: {
-        ':true': true,
-        ':status': 'production',
-        ':ts': now,
-        ':by': body?.promoted_by || 'admin',
+        ':false': false,
+        ':status': 'archived',
       },
-    })
-    .promise();
+    }));
+  }
+
+  // Mark model as production
+  await ddb.send(new UpdateCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Key: { model_version: modelVersion },
+    UpdateExpression:
+      'SET is_production = :true, #status = :status, promoted_at = :ts, promoted_by = :by',
+    ExpressionAttributeNames: {
+      '#status': 'status',
+    },
+    ExpressionAttributeValues: {
+      ':true': true,
+      ':status': 'production',
+      ':ts': now,
+      ':by': body?.promoted_by || 'admin',
+    },
+  }));
 
   return ok(200, {
     model_version: modelVersion,
@@ -903,20 +897,19 @@ async function deleteModel(modelVersion) {
     return ok(400, { error: 'Invalid model version' });
   }
 
-  // Fix #2: Check if this is the current production model
-  const getResp = await ddb
-    .get({ TableName: MODEL_REGISTRY_TABLE, Key: { model_version: modelVersion } })
-    .promise();
+  // Check if this is the current production model
+  const getResp = await ddb.send(new GetCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Key: { model_version: modelVersion },
+  }));
   if (getResp.Item?.is_production) {
     return ok(400, { error: 'Cannot delete the current production model. Promote a different model first.' });
   }
 
-  await ddb
-    .delete({
-      TableName: MODEL_REGISTRY_TABLE,
-      Key: { model_version: modelVersion },
-    })
-    .promise();
+  await ddb.send(new DeleteCommand({
+    TableName: MODEL_REGISTRY_TABLE,
+    Key: { model_version: modelVersion },
+  }));
 
   return ok(200, { message: 'Model deleted', model_version: modelVersion });
 }
