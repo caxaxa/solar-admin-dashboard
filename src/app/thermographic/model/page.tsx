@@ -26,12 +26,17 @@ type Archive = {
   archived_files?: string[];
   metadata_uri: string;
   date?: string;
+  training_status?: 'trained' | 'untrained';
+  trained_in_model?: string;
+  trained_at?: string;
 };
 
 export default function ModelPage() {
   const [models, setModels] = useState<ModelRecord[]>([]);
   const [productionModel, setProductionModel] = useState<string | null>(null);
   const [archives, setArchives] = useState<Archive[]>([]);
+  const [trainedCount, setTrainedCount] = useState(0);
+  const [untrainedCount, setUntrainedCount] = useState(0);
   const [manifestUri, setManifestUri] = useState<string>('');
   const [epochs, setEpochs] = useState<string>('5');
   const [batchSize, setBatchSize] = useState<string>('2');
@@ -63,6 +68,8 @@ export default function ModelPage() {
     if (!resp.ok) throw new Error('Failed to fetch training archives');
     const data = await resp.json();
     setArchives(data.archives || []);
+    setTrainedCount(data.trained_count || 0);
+    setUntrainedCount(data.untrained_count || 0);
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -488,11 +495,23 @@ export default function ModelPage() {
           </div>
 
           <div className="bg-white dark:bg-gray-900 rounded-lg shadow p-5 border border-gray-100 dark:border-gray-800">
-            <div className="mb-3">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-50">Training archives</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-300">
-                Released projects available for retraining
-              </p>
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-50">Training archives</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Released projects available for retraining
+                </p>
+              </div>
+              {archives.length > 0 && (
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-100 text-green-800 text-xs font-medium">
+                    {trainedCount} trained
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-medium">
+                    {untrainedCount} untrained
+                  </span>
+                </div>
+              )}
             </div>
             {archives.length === 0 ? (
               <p className="text-sm text-gray-600 dark:text-gray-300">No archives found.</p>
@@ -501,13 +520,31 @@ export default function ModelPage() {
                 {archives.map((a) => (
                   <div
                     key={a.metadata_uri}
-                    className="border border-gray-100 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900"
+                    className={`border rounded-lg p-4 bg-white dark:bg-gray-900 ${
+                      a.training_status === 'trained'
+                        ? 'border-green-200 dark:border-green-900'
+                        : 'border-amber-200 dark:border-amber-900'
+                    }`}
                   >
-                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-50">
-                      {a.project_id || 'Project'} {a.org_id ? `• ${a.org_id}` : ''}
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-50">
+                        {a.project_id || 'Project'} {a.org_id ? `• ${a.org_id}` : ''}
+                      </div>
+                      {a.training_status === 'trained' ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-100 text-green-800">
+                          Trained
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800">
+                          Untrained
+                        </span>
+                      )}
                     </div>
-                    <div className="text-xs text-gray-600 dark:text-gray-300">
+                    <div className="text-xs text-gray-600 dark:text-gray-300 mt-1">
                       {a.date || ''} {a.released_at ? `• ${a.released_at}` : ''}
+                      {a.trained_in_model && (
+                        <span className="ml-2 text-green-600">• {a.trained_in_model}</span>
+                      )}
                     </div>
                     <div className="mt-2 text-xs text-blue-600 break-all">
                       <Link href={a.metadata_uri} target="_blank" className="hover:underline">

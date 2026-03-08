@@ -21,6 +21,7 @@ const DEFAULT_BATCH_SIZE = parseInt(process.env.RETRAIN_BATCH_SIZE || '2', 10);
 const DEFAULT_CHECKPOINT_EPOCHS = parseInt(process.env.RETRAIN_CHECKPOINT_EPOCHS || '20', 10);
 const DEFAULT_EVAL_EPOCHS = parseInt(process.env.RETRAIN_EVAL_EPOCHS || '6', 10);
 const PROD_MODEL_PREFIX = process.env.PROD_MODEL_PREFIX || 'model-registry';
+const TRAINED_INDEX_KEY = 'training-data/trained-index.json';
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
@@ -186,8 +187,64 @@ async function listModels() {
   });
 }
 
+async function getTrainedIndex() {
+  try {
+    const resp = await s3
+      .getObject({ Bucket: TRAINING_DATA_BUCKET, Key: TRAINED_INDEX_KEY })
+      .promise();
+    return JSON.parse(resp.Body.toString());
+  } catch (e) {
+    if (e.code === 'NoSuchKey' || e.statusCode === 404) {
+      return { trained: {} };
+    }
+    console.error('getTrainedIndex error', e);
+    return { trained: {} };
+  }
+}
+
+async function updateTrainedIndex(manifestUri, modelVersion) {
+  const index = await getTrainedIndex();
+  const now = new Date().toISOString();
+
+  // Read the manifest to get all archive keys
+  const parsed = parseS3Uri(manifestUri);
+  if (!parsed) return;
+
+  try {
+    const resp = await s3
+      .getObject({ Bucket: parsed.bucket, Key: parsed.key })
+      .promise();
+    const manifest = JSON.parse(resp.Body.toString());
+    const archives = manifest.archives || [];
+
+    for (const a of archives) {
+      const archiveKey = `${a.user_id || 'na'}|${a.project_id || a.source_key || ''}`;
+      if (!index.trained[archiveKey]) {
+        index.trained[archiveKey] = {
+          model_version: modelVersion,
+          trained_at: now,
+        };
+      }
+    }
+
+    await s3
+      .putObject({
+        Bucket: TRAINING_DATA_BUCKET,
+        Key: TRAINED_INDEX_KEY,
+        Body: JSON.stringify(index, null, 2),
+        ContentType: 'application/json',
+      })
+      .promise();
+  } catch (e) {
+    console.error('updateTrainedIndex error', e);
+  }
+}
+
 async function listArchives() {
-  const metadataKeys = await listAllMetadataKeys();
+  const [metadataKeys, trainedIndex] = await Promise.all([
+    listAllMetadataKeys(),
+    getTrainedIndex(),
+  ]);
 
   const archives = [];
   const seen = new Set();
@@ -224,6 +281,9 @@ async function listArchives() {
 
     const archivedFiles = await listFilesInPrefix(basePrefix, key);
 
+    const archiveKey = `${userId || 'na'}|${projectId || key}`;
+    const trainedEntry = trainedIndex.trained[archiveKey];
+
     const archive = {
       user_id: userId,
       project_id: projectId,
@@ -231,6 +291,9 @@ async function listArchives() {
       metadata_uri: `s3://${TRAINING_DATA_BUCKET}/${key}`,
       archived_files: archivedFiles,
       source_key: key,
+      training_status: trainedEntry ? 'trained' : 'untrained',
+      trained_in_model: trainedEntry ? trainedEntry.model_version : null,
+      trained_at: trainedEntry ? trainedEntry.trained_at : null,
     };
 
     archives.push(archive);
@@ -266,9 +329,14 @@ async function listArchives() {
     return db.localeCompare(da);
   });
 
+  const trainedCount = archiveList.filter((a) => a.training_status === 'trained').length;
+  const untrainedCount = archiveList.filter((a) => a.training_status === 'untrained').length;
+
   return ok(200, {
     archives: archiveList,
     count: archiveList.length,
+    trained_count: trainedCount,
+    untrained_count: untrainedCount,
     training_bucket: TRAINING_DATA_BUCKET,
   });
 }
@@ -491,6 +559,11 @@ async function launchRetrainJob(modelVersion, body) {
       },
     })
     .promise();
+
+  // Mark all archives in this manifest as trained
+  if (manifestUri) {
+    await updateTrainedIndex(manifestUri, modelVersion);
+  }
 
   return ok(200, {
     model_version: modelVersion,
