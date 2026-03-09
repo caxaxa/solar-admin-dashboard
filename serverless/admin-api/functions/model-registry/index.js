@@ -655,7 +655,7 @@ function parseS3Uri(uri) {
   return { bucket: without.slice(0, firstSlash), key: without.slice(firstSlash + 1) };
 }
 
-const SKIP_PREFIXES = ['datasets/', 'model-registry/', 'detectron2-solar-models/', 'training-data/manifests/'];
+const SKIP_PREFIXES = ['datasets/', 'model-registry/', 'detectron2-solar-models/', 'training-data/manifests/', 'el/', 'iv/', 'lambda-deployment/', 'models/'];
 
 async function listAllMetadataKeys() {
   let continuationToken;
