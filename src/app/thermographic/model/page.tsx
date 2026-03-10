@@ -17,6 +17,7 @@ type ModelRecord = {
   is_production?: boolean;
   promoted_at?: number;
   promoted_by?: string;
+  metrics?: { AP?: number | null; AP50?: number | null; AP75?: number | null };
 };
 
 type Archive = {
@@ -50,6 +51,7 @@ export default function ModelPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [pollCount, setPollCount] = useState(0);
+  const [syncingMetrics, setSyncingMetrics] = useState(false);
   const MAX_POLL_ATTEMPTS = 120;
 
   const getErrorMessage = (err: unknown, fallback: string) =>
@@ -84,6 +86,24 @@ export default function ModelPage() {
       setLoading(false);
     }
   }, [fetchModels, fetchArchives]);
+
+  const syncMetrics = async () => {
+    setSyncingMetrics(true);
+    setError(null);
+    try {
+      const resp = await apiFetch(buildApiUrl('/api/model-registry/sync-metrics'), {
+        method: 'POST',
+      });
+      if (!resp.ok) throw new Error('Failed to sync metrics');
+      const data = await resp.json();
+      setSuccess(`Metrics synced: ${data.synced} updated, ${data.skipped} skipped, ${data.failed} failed`);
+      await fetchModels();
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Sync metrics failed'));
+    } finally {
+      setSyncingMetrics(false);
+    }
+  };
 
   useEffect(() => {
     refreshAll();
@@ -291,6 +311,14 @@ export default function ModelPage() {
             </div>
             <div className="flex gap-2">
               <button
+                onClick={syncMetrics}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200"
+                disabled={syncingMetrics}
+              >
+                {syncingMetrics ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                Sync Metrics
+              </button>
+              <button
                 onClick={refreshAll}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200"
                 disabled={busy}
@@ -442,6 +470,9 @@ export default function ModelPage() {
                     <th className="py-2 pr-3">Manifest</th>
                     <th className="py-2 pr-3">Base</th>
                     <th className="py-2 pr-3">Created</th>
+                    <th className="py-2 pr-3">AP</th>
+                    <th className="py-2 pr-3">AP50</th>
+                    <th className="py-2 pr-3">AP75</th>
                     <th className="py-2 pr-3">Actions</th>
                   </tr>
                 </thead>
@@ -475,6 +506,9 @@ export default function ModelPage() {
                       <td className="py-2 pr-3">
                         {m.created_at ? new Date(m.created_at * 1000).toLocaleString() : '-'}
                       </td>
+                      <td className="py-2 pr-3 font-mono">{m.metrics?.AP?.toFixed(1) ?? '-'}</td>
+                      <td className="py-2 pr-3 font-mono">{m.metrics?.AP50?.toFixed(1) ?? '-'}</td>
+                      <td className="py-2 pr-3 font-mono">{m.metrics?.AP75?.toFixed(1) ?? '-'}</td>
                       <td className="py-2 pr-3">
                         <div className="flex gap-2">
                           {!m.is_production && (

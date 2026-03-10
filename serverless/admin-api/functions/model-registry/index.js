@@ -85,6 +85,11 @@ async function s3BodyToString(body) {
 
 exports.handler = async (event) => {
   _event = event;
+  // API Gateway HTTP API may base64-encode the request body
+  if (event.isBase64Encoded && event.body) {
+    event.body = Buffer.from(event.body, 'base64').toString('utf-8');
+    event.isBase64Encoded = false;
+  }
   try {
     if (event.requestContext?.http?.method === 'OPTIONS') {
       return ok(200, { status: 'ok' });
@@ -143,6 +148,10 @@ exports.handler = async (event) => {
       const modelVersion = decodeURIComponent(promoteMatch[1]);
       const body = safeParse(event.body);
       return await promoteModel(modelVersion, body || {});
+    }
+
+    if (path === '/api/model-registry/sync-metrics' && method === 'POST') {
+      return await syncMetrics();
     }
 
     return ok(404, { error: 'Not found' });
@@ -467,6 +476,7 @@ async function triggerRetrain(body) {
 }
 
 async function launchRetrainJob(modelVersion, body) {
+  console.log('launchRetrainJob called', JSON.stringify({ modelVersion, body }));
   // Always fine-tune from the current production model unless explicitly overridden.
   const prodPointer = await getProdPointer();
 
@@ -504,7 +514,7 @@ async function launchRetrainJob(modelVersion, body) {
   const baseWeightsUri =
     body.base_weights_uri ||
     (baseModelVersion
-      ? `s3://${OUTPUT_BUCKET}/${PROD_MODEL_PREFIX}/${baseModelVersion}/model_final.pth`
+      ? `s3://${OUTPUT_BUCKET}/${PROD_MODEL_PREFIX}/${baseModelVersion}/${baseModelVersion}/model_final.pth`
       : null);
   const datasetUploadUri = datasetArchiveUri;
 
@@ -885,11 +895,84 @@ async function promoteModel(modelVersion, body) {
     },
   }));
 
+  // Auto-fetch metrics for promoted model if not already present
+  if (!getResp.Item.metrics) {
+    const metrics = await fetchMetricsForModel(modelVersion);
+    if (metrics) {
+      await ddb.send(new UpdateCommand({
+        TableName: MODEL_REGISTRY_TABLE,
+        Key: { model_version: modelVersion },
+        UpdateExpression: 'SET metrics = :m',
+        ExpressionAttributeValues: { ':m': metrics },
+      }));
+    }
+  }
+
   return ok(200, {
     model_version: modelVersion,
     status: 'production',
     message: 'Model promoted',
   });
+}
+
+async function fetchMetricsForModel(modelVersion) {
+  const key = `${PROD_MODEL_PREFIX}/${modelVersion}/${modelVersion}/final_results.json`;
+  try {
+    const resp = await s3.send(new GetObjectCommand({
+      Bucket: TRAINING_DATA_BUCKET,
+      Key: key,
+    }));
+    const raw = await s3BodyToString(resp.Body);
+    const sanitized = raw.replace(/NaN/g, 'null');
+    const parsed = JSON.parse(sanitized);
+    const bbox = parsed.bbox || {};
+    const round2 = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+    return {
+      AP: round2(bbox.AP),
+      AP50: round2(bbox.AP50),
+      AP75: round2(bbox.AP75),
+    };
+  } catch (e) {
+    console.error('fetchMetricsForModel: failed for', modelVersion, e.message);
+    return null;
+  }
+}
+
+async function syncMetrics() {
+  const resp = await ddb.send(new ScanCommand({ TableName: MODEL_REGISTRY_TABLE, Limit: 200 }));
+  const items = (resp.Items || []).filter(
+    (item) => item.model_version && item.model_version !== PROD_POINTER_PK
+  );
+
+  let synced = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const item of items) {
+    if (item.metrics) {
+      skipped++;
+      continue;
+    }
+    const metrics = await fetchMetricsForModel(item.model_version);
+    if (!metrics) {
+      failed++;
+      continue;
+    }
+    try {
+      await ddb.send(new UpdateCommand({
+        TableName: MODEL_REGISTRY_TABLE,
+        Key: { model_version: item.model_version },
+        UpdateExpression: 'SET metrics = :m',
+        ExpressionAttributeValues: { ':m': metrics },
+      }));
+      synced++;
+    } catch (e) {
+      console.error('syncMetrics: DDB update failed for', item.model_version, e.message);
+      failed++;
+    }
+  }
+
+  return ok(200, { synced, skipped, failed, total: items.length });
 }
 
 async function deleteModel(modelVersion) {

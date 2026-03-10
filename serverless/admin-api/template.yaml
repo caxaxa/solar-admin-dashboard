@@ -788,6 +788,12 @@ Resources:
             ApiId: !Ref AdminHttpApi
             Path: /api/model-registry/prepare
             Method: POST
+        SyncMetrics:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/model-registry/sync-metrics
+            Method: POST
 
   # ── EL (Electroluminescence) Lambda Functions ──
 
