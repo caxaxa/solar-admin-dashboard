@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, FolderKanban, Settings, Sun, Cpu, Zap, Activity } from 'lucide-react';
+import { Home, FolderKanban, Settings, Sun, Cpu, Zap, Activity, Receipt } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: Home },
@@ -14,6 +14,8 @@ const navItems = [
   { href: '/el/model', label: 'EL AI Model', icon: Cpu },
   // IV Curve
   { href: '/iv/projects', label: 'IV Curve Projects', icon: Activity },
+  // Billing
+  { href: '/billing', label: 'Billing & Revenue', icon: Receipt },
   // Settings
   { href: '/settings', label: 'Settings', icon: Settings },
 ];

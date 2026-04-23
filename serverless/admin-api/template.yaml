@@ -270,6 +270,32 @@ Resources:
             Path: /projects
             Method: GET
 
+  BillingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: billing/index.handler
+      Timeout: 30
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+              Resource: !Sub arn:aws:cognito-idp:${AwsRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /billing
+            Method: GET
+
   AuthLoginFunction:
     Type: AWS::Serverless::Function
     Properties:

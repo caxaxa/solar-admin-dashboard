@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { User, LogOut, Home, FolderKanban, Settings as SettingsIcon, Cpu, Zap, Activity } from 'lucide-react';
+import { User, LogOut, Home, FolderKanban, Settings as SettingsIcon, Cpu, Zap, Activity, Receipt } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: Home },
@@ -12,6 +12,7 @@ const navItems = [
   { href: '/el/projects', label: 'EL Projects', icon: Zap },
   { href: '/el/model', label: 'EL AI', icon: Cpu },
   { href: '/iv/projects', label: 'IV Projects', icon: Activity },
+  { href: '/billing', label: 'Billing', icon: Receipt },
   { href: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
