@@ -53,6 +53,9 @@ function getELJobResources(env) {
     jobQueue: process.env[`JOB_QUEUE_${normalized.toUpperCase()}`] || '',
     reportJobDefinition:
       process.env[`EL_REPORT_JOB_DEF_${normalized.toUpperCase()}`] || '',
+    inferenceJobDefinition:
+      process.env[`EL_INFERENCE_JOB_DEF_${normalized.toUpperCase()}`] || '',
+    inferenceMode: (process.env.EL_INFERENCE_MODE || 'mock').toLowerCase(),
   };
 }
 

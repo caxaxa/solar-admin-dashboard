@@ -37,6 +37,9 @@ Globals:
         EL_REPORTS_BUCKET_PROD: !Ref ELReportsBucketProd
         EL_REPORT_JOB_DEF_DEV: !Ref ELReportJobDefinitionDev
         EL_REPORT_JOB_DEF_PROD: !Ref ELReportJobDefinitionProd
+        EL_INFERENCE_JOB_DEF_DEV: !Ref ELInferenceJobDefinitionDev
+        EL_INFERENCE_JOB_DEF_PROD: !Ref ELInferenceJobDefinitionProd
+        EL_INFERENCE_MODE: !Ref ELInferenceMode
         IV_UPLOADS_BUCKET_DEV: !Ref IVUploadsBucketDev
         IV_UPLOADS_BUCKET_PROD: !Ref IVUploadsBucketProd
         IV_REPORTS_BUCKET_DEV: !Ref IVReportsBucketDev
@@ -147,6 +150,17 @@ Parameters:
   ELReportJobDefinitionProd:
     Type: String
     Default: solar-el-report-prod
+  ELInferenceJobDefinitionDev:
+    Type: String
+    Default: solar-el-inference-dev
+  ELInferenceJobDefinitionProd:
+    Type: String
+    Default: solar-el-inference-prod
+  ELInferenceMode:
+    Type: String
+    Default: mock
+    AllowedValues: [mock, batch]
+    Description: 'EL detection mode — "mock" returns random bboxes (default, keeps UI functional until an EL Detectron2 checkpoint is trained); "batch" submits the real solar-el-inference-{env} Batch job.'
   IVUploadsBucketDev:
     Type: String
     Default: solar-iv-uploads-dev
@@ -854,6 +868,10 @@ Resources:
               Resource:
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
                 - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+            - Effect: Allow
+              Action:
+                - batch:SubmitJob
+              Resource: '*'
       Events:
         Api:
           Type: HttpApi
@@ -997,6 +1015,17 @@ Resources:
                 - !Sub arn:aws:s3:::${ELReportsBucketProd}/*
                 - arn:aws:s3:::solar-ai-training
                 - arn:aws:s3:::solar-ai-training/*
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource:
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableDev}
+                - !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ProjectsTableProd}
+            - Effect: Allow
+              Action:
+                - batch:DescribeJobs
+              Resource: '*'
       Events:
         Api:
           Type: HttpApi
