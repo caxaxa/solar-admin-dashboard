@@ -42,6 +42,7 @@ parameter_overrides = [
     "ELReportsBucketProd=solar-el-reports-prod",
     "ELReportJobDefinitionDev=solar-el-report-dev",
     "ELReportJobDefinitionProd=solar-el-report-prod",
+    "ELInferenceMode=batch",
     "IVUploadsBucketDev=solar-iv-uploads-dev",
     "IVUploadsBucketProd=solar-iv-uploads-prod",
     "IVReportsBucketDev=solar-iv-reports-dev",

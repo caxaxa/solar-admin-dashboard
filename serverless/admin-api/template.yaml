@@ -158,9 +158,9 @@ Parameters:
     Default: solar-el-inference-prod
   ELInferenceMode:
     Type: String
-    Default: mock
+    Default: batch
     AllowedValues: [mock, batch]
-    Description: 'EL detection mode — "mock" returns random bboxes (default, keeps UI functional until an EL Detectron2 checkpoint is trained); "batch" submits the real solar-el-inference-{env} Batch job.'
+    Description: 'EL detection mode — "batch" (default) submits the real solar-el-inference-{env} Batch job using the Detectron2 checkpoint at EL_MODEL_S3_URI; "mock" returns random bboxes and is retained as a fallback for when no checkpoint exists or for local UI work.'
   IVUploadsBucketDev:
     Type: String
     Default: solar-iv-uploads-dev
