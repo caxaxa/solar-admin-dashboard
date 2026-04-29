@@ -126,6 +126,15 @@ Parameters:
   ProdModelPrefix:
     Type: String
     Default: model-registry
+  ELModelRegistryTable:
+    Type: String
+    Default: solar-el-model-registry-prod
+  ELTrainingJobQueue:
+    Type: String
+    Default: solar-job-queue-prod
+  ELTrainingJobDefinition:
+    Type: String
+    Default: solar-el-training
   ELUploadsBucketDev:
     Type: String
     Default: solar-el-uploads-dev
@@ -1157,6 +1166,106 @@ Resources:
             ApiId: !Ref AdminHttpApi
             Path: /iv/projects/{orgId}/{projectId}/data-review
             Method: GET
+
+  # ── EL Model Registry — mirrors ModelRegistryFunction for the EL modality ──
+
+  ELModelRegistryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: el-model-registry/index.handler
+      Timeout: 60
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource: !Sub arn:aws:dynamodb:${AwsRegion}:${AWS::AccountId}:table/${ELModelRegistryTable}
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:ListBucket
+              Resource:
+                - !Sub arn:aws:s3:::${TrainingDataBucket}
+                - !Sub arn:aws:s3:::${TrainingDataBucket}/*
+            - Effect: Allow
+              Action:
+                - batch:SubmitJob
+              Resource:
+                - !Sub arn:aws:batch:${AwsRegion}:${AWS::AccountId}:job-queue/${ELTrainingJobQueue}
+                - !Sub arn:aws:batch:${AwsRegion}:${AWS::AccountId}:job-definition/${ELTrainingJobDefinition}*
+      Environment:
+        Variables:
+          TRAINING_DATA_BUCKET: !Ref TrainingDataBucket
+          EL_MODEL_REGISTRY_TABLE: !Ref ELModelRegistryTable
+          EL_TRAINING_JOB_QUEUE: !Ref ELTrainingJobQueue
+          EL_TRAINING_JOB_DEFINITION: !Ref ELTrainingJobDefinition
+      Events:
+        ListModels:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-model-registry
+            Method: GET
+        SyncMetrics:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-model-registry/sync-metrics
+            Method: POST
+        Prepare:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-model-registry/prepare
+            Method: POST
+        Launch:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-model-registry/{modelVersion}/launch
+            Method: POST
+        Promote:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-model-registry/{modelVersion}/promote
+            Method: POST
+        DeleteModel:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-model-registry/{modelVersion}
+            Method: DELETE
+        Archives:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-training-data/archives
+            Method: GET
+        Manifests:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-training-data/manifests
+            Method: POST
+        BuildCoco:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-training-data/coco
+            Method: POST
+        CocoStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AdminHttpApi
+            Path: /api/el-training-data/coco/status
+            Method: POST
 
 Outputs:
   ApiEndpoint:
