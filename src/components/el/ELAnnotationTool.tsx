@@ -34,11 +34,18 @@ interface BoundingBox {
 }
 
 // --- Label configuration ---------------------------------------------------
-type DefectLabel = 'crack' | 'micro-crack';
+// Multi-class EL taxonomy. Keep in sync with:
+//   - solar-admin-dashboard/serverless/admin-api/functions/el-run-detections/index.js MOCK_LABELS
+//   - solar-detection-model/deploy/training_el/prepare_coco.py CATEGORIES
+//   - solar-web-app/iac/cdk/lib/solar-stack.ts EL_CLASSES env var
+//   - el-report-builder/src/el_report_builder/config/constants.py DEFECT_COLORS
+type DefectLabel = 'crack' | 'micro-crack' | 'finger-interruption' | 'dead-cell';
 
 const LABEL_CONFIG: Record<DefectLabel, { color: string; display: string; key: string }> = {
-  crack:        { color: '#ef4444', display: 'Crack',       key: '1' },
-  'micro-crack': { color: '#f59e0b', display: 'Micro-crack', key: '2' },
+  crack:                 { color: '#ef4444', display: 'Crack',               key: '1' },
+  'micro-crack':         { color: '#f59e0b', display: 'Micro-crack',         key: '2' },
+  'finger-interruption': { color: '#3b82f6', display: 'Finger interruption', key: '3' },
+  'dead-cell':           { color: '#8b5cf6', display: 'Dead cell',           key: '4' },
 };
 
 const LABELS = Object.keys(LABEL_CONFIG) as DefectLabel[];
@@ -590,9 +597,11 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
           setIsPanMode(false);
         }
       }
-      // Label shortcuts: 1 = crack, 2 = micro-crack
+      // Label shortcuts: 1 = crack, 2 = micro-crack, 3 = finger-interruption, 4 = dead-cell
       if (e.key === '1') setActiveLabel('crack');
       if (e.key === '2') setActiveLabel('micro-crack');
+      if (e.key === '3') setActiveLabel('finger-interruption');
+      if (e.key === '4') setActiveLabel('dead-cell');
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
