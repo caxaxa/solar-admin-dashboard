@@ -278,7 +278,9 @@ async function promoteModel(modelVersion, body) {
       await ddb.send(new UpdateCommand({
         TableName: EL_MODEL_REGISTRY_TABLE,
         Key: { model_version: modelVersion },
-        UpdateExpression: 'SET metrics = :m',
+        // 'metrics' is a DynamoDB reserved keyword — must alias via ExpressionAttributeNames
+        UpdateExpression: 'SET #m = :m',
+        ExpressionAttributeNames: { '#m': 'metrics' },
         ExpressionAttributeValues: { ':m': metrics },
       }));
     }
@@ -331,7 +333,9 @@ async function syncMetrics() {
       await ddb.send(new UpdateCommand({
         TableName: EL_MODEL_REGISTRY_TABLE,
         Key: { model_version: item.model_version },
-        UpdateExpression: 'SET metrics = :m',
+        // 'metrics' is a DynamoDB reserved keyword — must alias via ExpressionAttributeNames
+        UpdateExpression: 'SET #m = :m',
+        ExpressionAttributeNames: { '#m': 'metrics' },
         ExpressionAttributeValues: { ':m': metrics },
       }));
       synced++;
