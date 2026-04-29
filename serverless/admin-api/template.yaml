@@ -131,7 +131,7 @@ Parameters:
     Default: solar-el-model-registry-prod
   ELTrainingJobQueue:
     Type: String
-    Default: solar-job-queue-prod
+    Default: solar-gpu-queue-v2
   ELTrainingJobDefinition:
     Type: String
     Default: solar-el-training
