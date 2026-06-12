@@ -107,6 +107,12 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
   const currentRectRef = useRef<Rect | null>(null);
   const activeLabelRef = useRef<DefectLabel>(DEFAULT_LABEL);
 
+  // rAF render dedupe (A8): mouse:move fires 60-100x/sec while drawing; a
+  // full-canvas renderAll per event burns 30-50% CPU. Coalesce to one render
+  // per animation frame.
+  const rafPendingRef = useRef(false);
+  const rafIdRef = useRef<number | null>(null);
+
   // Generation counter — incremented on every loadImage call and on canvas
   // disposal so that stale img.onload callbacks are discarded.
   const loadGenRef = useRef(0);
@@ -366,7 +372,16 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
       const height = Math.abs(pointer.y - startPointRef.current.y);
 
       rect.set({ left, top, width, height });
-      canvas.renderAll();
+
+      // Schedule at most one renderAll per animation frame
+      if (!rafPendingRef.current) {
+        rafPendingRef.current = true;
+        rafIdRef.current = requestAnimationFrame(() => {
+          rafPendingRef.current = false;
+          rafIdRef.current = null;
+          canvas.renderAll();
+        });
+      }
     });
 
     // Mouse up - finish drawing or panning
@@ -388,6 +403,8 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
         currentRectRef.current = null;
         startPointRef.current = null;
         updateBoxCountRef.current();
+        // Ensure the final shape state is rendered even if no rAF is pending
+        canvas.renderAll();
       }
     });
 
@@ -407,6 +424,12 @@ export function ELAnnotationTool({ orgId, projectId, env }: ELAnnotationToolProp
     loadImageRef.current(0);
 
     return () => {
+      // Cancel any pending rAF render before disposing the canvas
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+        rafPendingRef.current = false;
+      }
       // Invalidate any pending img.onload callbacks before disposing
       loadGenRef.current++;
       canvas.dispose();

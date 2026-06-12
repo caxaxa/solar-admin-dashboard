@@ -32,8 +32,10 @@ function randomInt(min, max) {
 
 // Multi-class EL taxonomy — must stay in sync with:
 //   - solar-admin-dashboard/src/components/el/ELAnnotationTool.tsx LABEL_CONFIG
-//   - solar-detection-model/deploy/training_el/prepare_coco.py CATEGORIES
+//   - el-detection-model/training/prepare_coco.py CATEGORIES
+//   - el-report-builder/src/el_report_builder/config/constants.py alias sets
 //   - solar-web-app/iac/cdk/lib/solar-stack.ts EL_CLASSES env var
+// Checked automatically by /home/ubuntu/check_el_taxonomy.py (run-all-tests.sh)
 const MOCK_LABELS = ['crack', 'micro-crack', 'finger-interruption', 'dead-cell'];
 
 function generateMockBoxes(imageWidth, imageHeight) {

@@ -87,6 +87,11 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
   const startPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentRectRef = useRef<Rect | null>(null);
 
+  // rAF render dedupe (same audit family as EL A8): mouse:move fires
+  // 60-100x/sec while drawing; coalesce full-canvas redraws to one per frame.
+  const rafPendingRef = useRef(false);
+  const rafIdRef = useRef<number | null>(null);
+
   // Undo/Redo history
   const undoStackRef = useRef<string[]>([]);
   const redoStackRef = useRef<string[]>([]);
@@ -391,7 +396,15 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
         top: height < 0 ? pointer.y : startPointRef.current.y,
       });
 
-      canvas.renderAll();
+      // Schedule at most one renderAll per animation frame
+      if (!rafPendingRef.current) {
+        rafPendingRef.current = true;
+        rafIdRef.current = requestAnimationFrame(() => {
+          rafPendingRef.current = false;
+          rafIdRef.current = null;
+          canvas.renderAll();
+        });
+      }
     };
 
     const handleMouseUp = () => {
@@ -438,6 +451,12 @@ export function AnnotationTool({ orgId, projectId, env }: AnnotationToolProps) {
     canvas.on('mouse:up', handleMouseUp);
 
     return () => {
+      // Cancel any pending rAF render before detaching handlers/unmounting
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+        rafPendingRef.current = false;
+      }
       canvas.off('mouse:down', handleMouseDown);
       canvas.off('mouse:move', handleMouseMove);
       canvas.off('mouse:up', handleMouseUp);
